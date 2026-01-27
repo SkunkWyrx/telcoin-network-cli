@@ -436,10 +436,30 @@ docker run -d \
 
 ## System Requirements
 
-- Docker 20.10+
-- At least 4GB RAM available to Docker
-- At least 20GB disk space (for build and chain data)
-- Stable internet connection
+### Minimum Requirements
+- **Docker**: 20.10+ (or Docker Compose 2.0+)
+- **RAM**: 4GB available to Docker (8GB+ recommended for better performance)
+- **CPU**: 2 cores (4+ cores recommended for faster sync)
+- **Disk Space**: 
+  - 20GB minimum for initial build and chain data
+  - 50GB+ recommended for long-term operation (chain data grows over time)
+- **Network**: Stable internet connection (broadband recommended)
+
+### Recommended Requirements
+- **RAM**: 8GB+ available to Docker
+- **CPU**: 4+ cores
+- **Disk Space**: 100GB+ SSD (faster sync and better performance)
+- **Network**: High-speed connection for initial sync
+
+**Note**: Resource usage will be higher during:
+- Initial chain sync
+- Build process (temporary, only during image creation)
+- High network activity periods
+
+Monitor resource usage with:
+```bash
+docker stats telcoin-observer
+```
 
 ## What's Included
 
