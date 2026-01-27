@@ -23,6 +23,7 @@ Get your Telcoin Network observer node running in minutes. Choose your preferred
 #### Step 1: Configure Environment Variables
 
 **Create your `.env` file** (if you haven't already):
+
 ```bash
 # Copy the example file
 cp .env.example .env
@@ -36,17 +37,20 @@ cp .env.example .env
 #### Step 2: Build the Image
 
 **Build from default branch (main):**
+
 ```bash
 docker compose -f src/docker/docker-compose.yml build
 ```
 
 **Build from a specific branch or tag:**
+
 ```bash
 # Set GIT_BRANCH in your .env file, or:
 GIT_BRANCH=develop docker compose -f src/docker/docker-compose.yml build
 ```
 
 **Examples:**
+
 - `GIT_BRANCH=main` - Build from main branch (default)
 - `GIT_BRANCH=develop` - Build from develop branch
 - `GIT_BRANCH=v1.0.0` - Build from a specific tag
@@ -55,12 +59,14 @@ GIT_BRANCH=develop docker compose -f src/docker/docker-compose.yml build
 #### Step 3: Start the Node
 
 **With environment variable passphrase** (non-interactive):
+
 ```bash
 # Make sure TN_BLS_PASSPHRASE is set in your .env file
 docker compose -f src/docker/docker-compose.yml up -d
 ```
 
 **With interactive passphrase** (prompts for passphrase):
+
 ```bash
 # Use 'docker compose run' for better interactive support
 docker compose -f src/docker/docker-compose.yml run --rm telcoin-observer
@@ -72,6 +78,7 @@ docker compose -f src/docker/docker-compose.yml up
 **Note:** If `TN_BLS_PASSPHRASE` is not set in `.env`, the container will prompt for it interactively.
 
 #### Step 4: Check Status
+
 ```bash
 # View logs
 docker compose -f src/docker/docker-compose.yml logs -f
@@ -89,11 +96,13 @@ docker compose -f src/docker/docker-compose.yml down
 #### Step 1: Build the Image
 
 **Build from default branch (main):**
+
 ```bash
 docker build -t telcoin-observer:latest -f src/docker/Dockerfile .
 ```
 
 **Build from a specific branch or tag:**
+
 ```bash
 # Build from a specific branch
 docker build --build-arg GIT_BRANCH=develop -t telcoin-observer:latest -f src/docker/Dockerfile .
@@ -108,6 +117,7 @@ docker build --build-arg GIT_BRANCH=feature-branch -t telcoin-observer:latest -f
 #### Step 2: Start the Node
 
 **With environment variable passphrase** (non-interactive):
+
 ```bash
 docker run -d \
   --name telcoin-observer \
@@ -119,6 +129,7 @@ docker run -d \
 ```
 
 **With interactive passphrase** (prompts for passphrase):
+
 ```bash
 docker run -it \
   --name telcoin-observer \
@@ -129,6 +140,7 @@ docker run -it \
 ```
 
 #### Step 3: Check Status
+
 ```bash
 # View logs
 docker logs -f telcoin-observer
@@ -157,6 +169,7 @@ docker pull ghcr.io/username/telcoin-observer:latest
 ```
 
 **Note**: Update `docker-compose.yml` to use pre-built image:
+
 ```yaml
 services:
   telcoin-observer:
@@ -169,6 +182,7 @@ services:
 ### Verify It's Working
 
 Once running, test the RPC endpoint:
+
 ```bash
 curl http://localhost:8545 \
   -X POST \
@@ -182,14 +196,14 @@ You should receive a JSON response with the chain ID.
 
 Environment variables are configured in the `.env` file in the project root. Copy `.env.example` to `.env` and customize as needed.
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `TN_BLS_PASSPHRASE` | No* | - | BLS passphrase. If set, uses `--bls-passphrase-source env`. If not set, uses interactive mode (requires `-it` flag). *Required for non-interactive mode |
-| `GIT_BRANCH` | No | `main` | Git branch or tag to build from (e.g., `main`, `develop`, `v1.0.0`) |
-| `DATADIR` | No | `/app/data` | Data directory path for keys, config, and chain data |
-| `PRIMARY_LISTENER_MULTIADDR` | No | `/ip6/::/udp/49590/quic-v1` | Primary listener multiaddress (IPv6 default) |
-| `WORKER_LISTENER_MULTIADDR` | No | `/ip6/::/udp/49594/quic-v1` | Worker listener multiaddress (IPv6 default) |
-| `CHAIN` | No | `adiri` | Chain to connect to (e.g., `adiri` for testnet) |
+| Variable                     | Required | Default                     | Description                                                                                                                                              |
+| ---------------------------- | -------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TN_BLS_PASSPHRASE`          | No\*     | -                           | BLS passphrase. If set, uses `--bls-passphrase-source env`. If not set, uses interactive mode (requires `-it` flag). \*Required for non-interactive mode |
+| `GIT_BRANCH`                 | No       | `main`                      | Git branch or tag to build from (e.g., `main`, `develop`, `v1.0.0`)                                                                                      |
+| `DATADIR`                    | No       | `/app/data`                 | Data directory path for keys, config, and chain data                                                                                                     |
+| `PRIMARY_LISTENER_MULTIADDR` | No       | `/ip6/::/udp/49590/quic-v1` | Primary listener multiaddress (IPv6 default)                                                                                                             |
+| `WORKER_LISTENER_MULTIADDR`  | No       | `/ip6/::/udp/49594/quic-v1` | Worker listener multiaddress (IPv6 default)                                                                                                              |
+| `CHAIN`                      | No       | `adiri`                     | Chain to connect to (e.g., `adiri` for testnet)                                                                                                          |
 
 **Security Note:** The `.env` file is git-ignored. Never commit it to version control. Use `.env.example` as a template.
 
@@ -198,12 +212,14 @@ Environment variables are configured in the `.env` file in the project root. Cop
 ### IPv6 (Default - Recommended)
 
 IPv6 is recommended because it's NAT-free and works with dynamic IPs. The defaults are:
+
 - `PRIMARY_LISTENER_MULTIADDR=/ip6/::/udp/49590/quic-v1`
 - `WORKER_LISTENER_MULTIADDR=/ip6/::/udp/49594/quic-v1`
 
 ### IPv4
 
 To use IPv4 instead, set:
+
 ```bash
 -e PRIMARY_LISTENER_MULTIADDR=/ip4/0.0.0.0/udp/49590/quic-v1
 -e WORKER_LISTENER_MULTIADDR=/ip4/0.0.0.0/udp/49594/quic-v1
@@ -212,6 +228,7 @@ To use IPv4 instead, set:
 ## Data Persistence
 
 The image uses Docker volumes to persist data. The data directory contains:
+
 - Observer keys and BLS keys
 - Configuration files
 - Chain sync data
@@ -221,26 +238,31 @@ The image uses Docker volumes to persist data. The data directory contains:
 ### Managing Volumes
 
 **List volumes**:
+
 ```bash
 docker volume ls
 ```
 
 **Inspect volume**:
+
 ```bash
 docker volume inspect telcoin-data
 ```
 
 **Remove volume** (⚠️ This deletes all data):
+
 ```bash
 docker volume rm telcoin-data
 ```
 
 **Backup volume**:
+
 ```bash
 docker run --rm -v telcoin-data:/data -v $(pwd):/backup ubuntu tar czf /backup/telcoin-backup.tar.gz -C /data .
 ```
 
 **Restore volume**:
+
 ```bash
 docker run --rm -v telcoin-data:/data -v $(pwd):/backup ubuntu tar xzf /backup/telcoin-backup.tar.gz -C /data
 ```
@@ -283,6 +305,7 @@ docker logs telcoin-observer
 ```
 
 You should see:
+
 - Peer discovery messages
 - Gossip traffic
 - Consensus sync logs
@@ -318,11 +341,13 @@ A valid JSON response confirms the observer node is live.
 If you're using `docker compose up` and don't see the passphrase prompt:
 
 1. **Use `docker compose run` instead** (recommended for interactive mode):
+
    ```bash
    docker compose -f src/docker/docker-compose.yml run --rm telcoin-observer
    ```
 
 2. **Or use environment variable** (non-interactive):
+
    ```bash
    # Edit docker-compose.yml and uncomment the environment section
    docker compose -f src/docker/docker-compose.yml up
@@ -355,6 +380,7 @@ The issue is that `docker compose up` doesn't always forward stdin properly for 
 You can build the image from any branch, tag, or commit in the telcoin-network repository:
 
 **Using Docker Compose:**
+
 ```bash
 # Build from develop branch
 GIT_BRANCH=develop docker compose -f src/docker/docker-compose.yml build
@@ -368,6 +394,7 @@ docker compose -f src/docker/docker-compose.yml build
 ```
 
 **Using Docker CLI:**
+
 ```bash
 # Build from develop branch
 docker build --build-arg GIT_BRANCH=develop -t telcoin-observer:latest -f src/docker/Dockerfile .
@@ -417,6 +444,7 @@ docker run -d \
 ## What's Included
 
 The image includes:
+
 - Ubuntu 24.04 LTS base
 - Rust toolchain (stable + nightly)
 - All required build dependencies
@@ -435,6 +463,7 @@ The image includes:
 For information on publishing this image to Docker Hub, GitHub Container Registry, or other registries, see [DISTRIBUTION.md](DISTRIBUTION.md).
 
 Quick publish commands:
+
 ```bash
 # Publish to Docker Hub
 DOCKER_USERNAME=yourusername ./scripts/publish-dockerhub.sh v1.0.0
@@ -446,7 +475,6 @@ GITHUB_USERNAME=yourusername GITHUB_TOKEN=your_token ./scripts/publish-ghcr.sh v
 ## Support
 
 For issues related to:
+
 - **Docker image**: Check this repository
 - **Telcoin Network**: See [Telcoin Network documentation](https://github.com/telcoin-association/telcoin-network)
-- **Observer node setup**: See `INSTRUCTIONS.md` in the project root
-- **Publishing images**: See [DISTRIBUTION.md](DISTRIBUTION.md)
