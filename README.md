@@ -458,20 +458,6 @@ The image includes:
 3. **Network Exposure**: Only expose ports you need (RPC on 8545)
 4. **Image Source**: Build from trusted source or verify the Dockerfile
 
-## Publishing and Distribution
-
-For information on publishing this image to Docker Hub, GitHub Container Registry, or other registries, see [DISTRIBUTION.md](DISTRIBUTION.md).
-
-Quick publish commands:
-
-```bash
-# Publish to Docker Hub
-DOCKER_USERNAME=yourusername ./scripts/publish-dockerhub.sh v1.0.0
-
-# Publish to GHCR
-GITHUB_USERNAME=yourusername GITHUB_TOKEN=your_token ./scripts/publish-ghcr.sh v1.0.0
-```
-
 ## Support
 
 For issues related to:
