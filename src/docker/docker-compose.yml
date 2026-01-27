@@ -17,11 +17,16 @@ services:
     volumes:
       - telcoin-data:/app/data
     
-    # Environment variables (loaded from .env file in project root)
+    # Load environment variables from .env file in project root
+    # This ensures the .env file is explicitly loaded
+    env_file:
+      - ../../.env
+    
+    # Environment variables (these can override values from .env or provide defaults)
     # See .env.example for all available variables
+    # Note: TN_BLS_PASSPHRASE is loaded from env_file above - don't override it here
+    # If you put it in the environment section, it tries to substitute from shell, not .env
     environment:
-      # BLS Passphrase (set in .env file - never commit this!)
-      TN_BLS_PASSPHRASE: ${TN_BLS_PASSPHRASE:-}
       # Data directory (optional, defaults to /app/data)
       DATADIR: ${DATADIR:-/app/data}
       # Network listener addresses (optional, defaults to IPv6)

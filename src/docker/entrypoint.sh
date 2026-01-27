@@ -14,10 +14,24 @@ BINARY="/app/bin/telcoin-network"
 mkdir -p "$DATADIR"
 
 # Determine passphrase source (needed for both key generation and node startup)
-if [ -n "$TN_BLS_PASSPHRASE" ]; then
-    PASSPHRASE_SOURCE="env"
+# Debug: Show what we received (without exposing the actual passphrase)
+if [ -n "${TN_BLS_PASSPHRASE+x}" ]; then
+    if [ -n "${TN_BLS_PASSPHRASE}" ]; then
+        PASSPHRASE_LENGTH=${#TN_BLS_PASSPHRASE}
+        echo "DEBUG: TN_BLS_PASSPHRASE is set (length: ${PASSPHRASE_LENGTH} characters)"
+        PASSPHRASE_SOURCE="env"
+        echo "✓ Using BLS passphrase from environment variable (--bls-passphrase-source env)"
+    else
+        echo "DEBUG: TN_BLS_PASSPHRASE is set but empty"
+        PASSPHRASE_SOURCE="ask"
+        echo "⚠ Using interactive BLS passphrase (--bls-passphrase-source ask)"
+        echo "  TN_BLS_PASSPHRASE is empty - set it in .env file to use non-interactive mode"
+    fi
 else
+    echo "DEBUG: TN_BLS_PASSPHRASE is not set"
     PASSPHRASE_SOURCE="ask"
+    echo "⚠ Using interactive BLS passphrase (--bls-passphrase-source ask)"
+    echo "  Set TN_BLS_PASSPHRASE in .env file to use non-interactive mode"
 fi
 
 # Check if observer keys/config already exist
@@ -72,6 +86,7 @@ echo "Chain: $CHAIN"
 echo "Data directory: $DATADIR"
 echo "Primary listener: $PRIMARY_LISTENER_MULTIADDR"
 echo "Worker listener: $WORKER_LISTENER_MULTIADDR"
+echo "BLS passphrase source: $PASSPHRASE_SOURCE"
 
 exec "$BINARY" node -vvv \
     --http \
