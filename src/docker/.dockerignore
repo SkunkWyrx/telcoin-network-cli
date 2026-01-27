@@ -1,0 +1,40 @@
+# Node modules
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Git files
+.git/
+.gitignore
+
+# Documentation
+*.md
+!src/docker/README.md
+
+# Other project files
+tsconfig.json
+package.json
+pnpm-lock.yaml
+
+# Docker files (except what we need)
+*.dockerfile
+docker-compose*.yml
+!src/docker/docker-compose.yml
+
+# OS files
+.DS_Store
+Thumbs.db

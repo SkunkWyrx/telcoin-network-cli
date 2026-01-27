@@ -1,0 +1,45 @@
+name: telcoin-network
+
+services:
+  telcoin-observer:
+    build:
+      context: ../..
+      dockerfile: src/docker/Dockerfile
+      args:
+        # Specify the git branch or tag to build from (default: main)
+        # Examples: main, develop, v1.0.0, feature-branch-name
+        GIT_BRANCH: ${GIT_BRANCH:-main}
+    image: telcoin-observer:latest
+    container_name: telcoin-observer
+    restart: unless-stopped
+    
+    # Volume for persistent data (keys, config, chain data)
+    volumes:
+      - telcoin-data:/app/data
+    
+    # Environment variables (loaded from .env file in project root)
+    # See .env.example for all available variables
+    environment:
+      # BLS Passphrase (set in .env file - never commit this!)
+      TN_BLS_PASSPHRASE: ${TN_BLS_PASSPHRASE:-}
+      # Data directory (optional, defaults to /app/data)
+      DATADIR: ${DATADIR:-/app/data}
+      # Network listener addresses (optional, defaults to IPv6)
+      PRIMARY_LISTENER_MULTIADDR: ${PRIMARY_LISTENER_MULTIADDR:-/ip6/::/udp/49590/quic-v1}
+      WORKER_LISTENER_MULTIADDR: ${WORKER_LISTENER_MULTIADDR:-/ip6/::/udp/49594/quic-v1}
+      # Chain to connect to (optional, defaults to adiri)
+      CHAIN: ${CHAIN:-adiri}
+    
+    # Network configuration
+    # Expose RPC port (8545) if you want to access it from host
+    ports:
+      - "8545:8545"
+    
+    # For interactive passphrase, use stdin_open and tty
+    # Enable these for interactive mode (when TN_BLS_PASSPHRASE is not set)
+    stdin_open: true
+    tty: true
+
+volumes:
+  telcoin-data:
+    driver: local
