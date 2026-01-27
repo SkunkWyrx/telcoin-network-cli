@@ -87,9 +87,12 @@ echo "Data directory: $DATADIR"
 echo "Primary listener: $PRIMARY_LISTENER_MULTIADDR"
 echo "Worker listener: $WORKER_LISTENER_MULTIADDR"
 echo "BLS passphrase source: $PASSPHRASE_SOURCE"
+echo "HTTP RPC will be available on: http://0.0.0.0:8545"
 
 exec "$BINARY" node -vvv \
     --http \
+    --http.addr 0.0.0.0 \
+    --http.port 8545 \
     --observer \
     --chain "$CHAIN" \
     --bls-passphrase-source "$PASSPHRASE_SOURCE" \
