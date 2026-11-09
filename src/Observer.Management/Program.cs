@@ -59,7 +59,7 @@ secured.MapGet("/api/session", (HttpContext c, IAntiforgery csrf) => Results.Ok(
     operationsEnabled = builder.Configuration.GetValue<bool>("Operations:Enabled"),
     csrf = csrf.GetAndStoreTokens(c).RequestToken
 }));
-secured.MapGet("/api/status", async (HttpContext c) => Results.Ok(await ((Remote)c.Items["remote"]!).Status()));
+FleetEndpoints.MapStatus(secured, c => ((Remote)c.Items["remote"]!).Status());
 secured.MapPost("/api/operations", async (HttpContext c, IAntiforgery csrf, Operation operation) => {
     await csrf.ValidateRequestAsync(c);
     if (!builder.Configuration.GetValue<bool>("Operations:Enabled")) return Results.Conflict(new { error = "Operations are disabled until the trusted runner is configured." });
@@ -97,8 +97,7 @@ class Remote(HttpContext context, IConfiguration config, HttpClient client) {
         var lb = await Arm($"/providers/Microsoft.Network/loadBalancers/{loadBalancer ?? config["Fleet:LoadBalancer"]}?api-version=2024-05-01");
         var pool = lb["properties"]!["backendAddressPools"]!.AsArray().Single(p => p!["name"]!.GetValue<string>() == config["Fleet:BackendPool"]);
         var result = new Dictionary<string,string>();
-        foreach (var entry in pool!["properties"]?["backendIPConfigurations"]?.AsArray() ?? []) {
-            var id = entry!["id"]!.GetValue<string>();
+        foreach (var id in BackendInventory.NicConfigurationIds(pool!)) {
             var nicId = id[..id.IndexOf("/ipConfigurations/", StringComparison.OrdinalIgnoreCase)];
             if (!nicId.StartsWith(root + "/providers/Microsoft.Network/networkInterfaces/", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Unexpected backend resource scope");
             var nic = await Arm(nicId + "?api-version=2024-05-01", true);
@@ -109,7 +108,6 @@ class Remote(HttpContext context, IConfiguration config, HttpClient client) {
             if (!System.Net.IPAddress.TryParse(address, out var parsed) || parsed.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork) throw new InvalidOperationException("Expected IPv4 backend");
             result[vmId.Split('/').Last()] = address;
         }
-        if (pool["properties"]?["loadBalancerBackendAddresses"]?.AsArray().Count > 0) throw new InvalidOperationException("IP-based backends require explicit VM identity mapping; refusing incomplete inventory");
         return result;
     }
     async Task<JsonNode> Rpc(string endpoint, string method, object[] args) {

@@ -17,7 +17,7 @@ az network vnet subnet list -g oprail-observer-adiri \
   --query '[].{name:name,id:id,prefix:addressPrefix,delegation:delegations[].serviceName}' -o json
 ```
 
-Select the dedicated management subnet (currently the 10.52.2.0/27 range),
+Select the dedicated management subnet `oprailobservermanagement` (10.52.2.0/27),
 delegated to Microsoft.App/environments. Do not choose the observer subnet.
 Set its actual name below. The Container Apps environment needs this subnet
 at creation; it cannot be retrofitted after creation.
@@ -26,7 +26,7 @@ at creation; it cannot be retrofitted after creation.
 RG=oprail-observer-adiri
 APP=oprail-observer-mgmt-adiri
 ACR=acaenvacrxvyzqyxhfzsno
-SUBNET_NAME='<actual-management-subnet-name>'
+SUBNET_NAME=oprailobservermanagement
 SUBNET_ID=$(az network vnet subnet show -g "$RG" \
   --vnet-name oprail-observer-adiri-vnet -n "$SUBNET_NAME" --query id -o tsv)
 TENANT_ID=$(az account show --query tenantId -o tsv)

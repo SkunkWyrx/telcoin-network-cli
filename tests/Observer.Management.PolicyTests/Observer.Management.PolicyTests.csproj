@@ -1,4 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings></PropertyGroup>
 <ItemGroup><Compile Include="../../src/Observer.Management/Policies.cs" Link="Policies.cs" /></ItemGroup>
+<ItemGroup><Compile Include="../../src/Observer.Management/BackendInventory.cs" Link="BackendInventory.cs" /></ItemGroup>
+<ItemGroup>
+  <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  <Compile Include="../../src/Observer.Management/FleetEndpoints.cs" Link="FleetEndpoints.cs" />
+</ItemGroup>
 </Project>
