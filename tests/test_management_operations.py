@@ -27,6 +27,27 @@ class ManagementTests(unittest.TestCase):
     def test_discovers_actual_members(self):
         self.assertEqual(reconcile(self.fleet()), {'one'})
 
+    def test_azure_duplicate_nic_references_are_not_ip_only_backends(self):
+        f = self.fleet()
+        pool, nic = list(f.az.side_effect)
+        identifier = pool['backendIPConfigurations'][0]['id']
+        pool['loadBalancerBackendAddresses'] = [{'networkInterfaceIPConfiguration': {'id': identifier.upper()}}]
+        f.az.side_effect = [pool, nic]
+        self.assertEqual(reconcile(f), {'one'})
+        self.assertEqual(f.az.call_count, 2)
+
+    def test_address_collection_can_supply_nic_identity(self):
+        f = self.fleet()
+        pool, nic = list(f.az.side_effect)
+        pool['loadBalancerBackendAddresses'] = [{'networkInterfaceIPConfiguration': pool.pop('backendIPConfigurations')[0]}]
+        f.az.side_effect = [pool, nic]
+        self.assertEqual(reconcile(f), {'one'})
+
+    def test_unmapped_ip_address_still_rejected(self):
+        f = self.fleet()
+        f.az.side_effect = [{'loadBalancerBackendAddresses': [{'ipAddress': '10.52.0.4'}]}]
+        with self.assertRaisesRegex(ValueError, 'IP-based'): reconcile(f)
+
     def test_stale_inventory_blocks_operation(self):
         f = self.fleet()
         f.c['nodes'] = [{'name': 'other'}]
@@ -43,6 +64,22 @@ class ManagementTests(unittest.TestCase):
         run(f, 'build', 'refs/tags/v0.16.0-adiri')
         f.az.assert_not_called()
         f.build.assert_called_once()
+
+    def test_read_only_check_validates_sync_without_node_changes(self):
+        f = self.fleet()
+        f.synced.return_value = True
+        run(f, 'check', 'cluster')
+        f.vm.assert_called_once_with(f.c['nodes'][0])
+        f.synced.assert_called_once_with(f.c['nodes'][0])
+        f.upgrade.assert_not_called()
+        f.snapshot.assert_not_called()
+        f.remove.assert_not_called()
+        f.add.assert_not_called()
+
+    def test_read_only_check_rejects_unsynced_nodes(self):
+        f = self.fleet()
+        f.synced.return_value = False
+        with self.assertRaisesRegex(ValueError, 'not synced'): run(f, 'check', 'cluster')
 
     def test_unpromoted_upgrade_is_rejected(self):
         f = self.fleet()

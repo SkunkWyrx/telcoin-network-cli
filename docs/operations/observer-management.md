@@ -103,6 +103,45 @@ API implementation references: [resource-group effective permissions](https://le
 
 ## Admin panel operations and history
 
+### Adiri runner and approval setup
+
+The dedicated `adiri-observer-runner` uses a B2s VM with a 32 GiB Standard SSD
+OS disk, managed identity and a public IP for outbound access. Its dedicated
+NSG denies all inbound traffic. Use Azure Run Command for administration.
+`infra/management/runner.bicep` and `runner-bootstrap.sh` provision only this
+controller; they do not redeploy observers. Persistent fleet state lives in
+`/var/lib/oprail-observers/adiri/adiri`; the protected profile and template live
+in `/etc/oprail-observers/adiri`. The profile uses the runner's own SSH key,
+not an operator's laptop key. Do not start a second controller against this pool.
+
+Both Adiri GitHub environments require reviewer `ArieJones` and the exact main
+branch. Self-review remains allowed because this is a single-administrator
+setup; the explicit deployment approval is still required. Website CI uses a
+separate federated identity with app-scoped Contributor and registry push/read
+rights, with no observer VM rights. Registry legacy RBAC grants repository-wide
+push on that registry; changing its permission mode is a separate migration.
+
+The operations workflow also supports `check` with argument `cluster`: it
+validates inventory, VM tags, SSH and sync without changing nodes. Run and
+approve this before enabling panel controls. It uses the runner's protected
+profile rather than the laptop defaults committed under `infra/pool`.
+
+To connect panel history, create a fine-grained GitHub token under
+<https://github.com/settings/personal-access-tokens/new> with resource owner
+`SkunkWyrx`, only repository `telcoin-network-cli`, and repository **Actions:
+Read and write** (Metadata read is automatic). Choose an expiry and arrange
+rotation. If organization approval is required, complete it first. Run locally:
+
+```bash
+python3 scripts/connect-management-github.py
+```
+
+Enter the token at the hidden terminal prompt, never in chat or a tracked file.
+The script stores it as an Azure Container App secret and explicitly leaves
+operations disabled. After the approved read-only runner check succeeds and
+history is visible, enable controls explicitly. Scheduled snapshots remain
+disabled until the manual capture/restore/remove acceptance tests pass.
+
 The site now shows private pool membership and public pool admission separately,
 checks sync against the independent reference, and queries each proxy's
 `19091/readyz` to distinguish a synced-but-drained node from one ready for

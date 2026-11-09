@@ -37,7 +37,7 @@ jobs:
           set -euo pipefail
           case "$OBSERVER_NETWORK" in adiri) ;; *) exit 1 ;; esac
           case "$OBSERVER_OPERATION" in
-            plan) python3 scripts/pool/fleet.py --config "infra/pool/$OBSERVER_NETWORK.json" plan ;;
-            snapshot-tick) python3 scripts/pool/snapshot_tick.py --config "infra/pool/$OBSERVER_NETWORK.json" ;;
+            plan) python3 scripts/pool/fleet.py --config "/etc/oprail-observers/$OBSERVER_NETWORK/pool.json" plan ;;
+            snapshot-tick) python3 scripts/pool/snapshot_tick.py --config "/etc/oprail-observers/$OBSERVER_NETWORK/pool.json" ;;
             *) exit 1 ;;
           esac

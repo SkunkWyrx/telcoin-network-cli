@@ -9,7 +9,7 @@ on:
         required: true
       operation:
         type: choice
-        options: [add, remove, build, upgrade, upgrade-tag, snapshot]
+        options: [check, add, remove, build, upgrade, upgrade-tag, snapshot]
         required: true
       argument:
         required: true
@@ -46,4 +46,4 @@ jobs:
         run: |
           set -euo pipefail
           case "$NETWORK" in adiri) ;; *) exit 1 ;; esac
-          python3 scripts/pool/management_operation.py --config "infra/pool/$NETWORK.json" --operation "$OPERATION" --argument "$ARGUMENT" --request-id "$REQUEST_ID"
+          python3 scripts/pool/management_operation.py --config "/etc/oprail-observers/$NETWORK/pool.json" --operation "$OPERATION" --argument "$ARGUMENT" --request-id "$REQUEST_ID"

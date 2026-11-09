@@ -15,7 +15,7 @@ from policy import pinned_image
 
 
 def validate(operation, argument):
-    patterns = {'add': r'[1-9][0-9]?', 'remove': r'[A-Za-z0-9][A-Za-z0-9-]{0,63}',
+    patterns = {'check': r'cluster', 'add': r'[1-9][0-9]?', 'remove': r'[A-Za-z0-9][A-Za-z0-9-]{0,63}',
                 'snapshot': r'[A-Za-z0-9][A-Za-z0-9-]{0,63}',
                 'build': r'refs/(tags|heads)/[A-Za-z0-9._/-]+',
                 'upgrade-tag': r'v[0-9]+\.[0-9]+\.[0-9]+(?:[.-][A-Za-z0-9._-]+)?',
@@ -28,12 +28,19 @@ def reconcile(fleet):
     """Refuse stale inventory before allowing destructive or snapshot-based operations."""
     pool = fleet.az('network', 'lb', 'address-pool', 'show', '-g', fleet.c['resource_group'],
                     '--lb-name', fleet.c.get('load_balancer', fleet.c['network'] + '-observers'), '-n', 'observers')
-    if pool.get('loadBalancerBackendAddresses'):
-        raise ValueError('IP-based backend inventory is not supported')
+    configurations = {item['id'].lower(): item['id'] for item in pool.get('backendIPConfigurations', [])}
+    for address in pool.get('loadBalancerBackendAddresses', []):
+        identifier = address.get('networkInterfaceIPConfiguration', {}).get('id')
+        if not identifier:
+            raise ValueError('IP-based backend inventory is not supported')
+        configurations[identifier.lower()] = identifier
     actual = set()
     root = f"/subscriptions/{fleet.c['subscription']}/resourceGroups/{fleet.c['resource_group']}/providers/"
-    for item in pool.get('backendIPConfigurations', []):
-        nic_id = item['id'].split('/ipConfigurations/')[0]
+    for identifier in configurations.values():
+        marker = identifier.lower().find('/ipconfigurations/')
+        if marker < 0:
+            raise ValueError('Invalid backend NIC configuration reference')
+        nic_id = identifier[:marker]
         if not nic_id.lower().startswith((root + 'Microsoft.Network/networkInterfaces/').lower()):
             raise ValueError('Backend outside managed resource group')
         nic = fleet.az('network', 'nic', 'show', '--ids', nic_id)
@@ -54,7 +61,14 @@ def run(fleet, operation, argument, env_root=Path('/etc/oprail-observers')):
         fleet.build(argument)
         return
     actual = reconcile(fleet)
-    if operation == 'snapshot':
+    if operation == 'check':
+        for node in fleet.c['nodes']:
+            fleet.vm(node)
+            if not fleet.synced(node):
+                raise ValueError('Observer is not synced or SSH is unavailable: ' + node['name'])
+            print('Verified managed VM, SSH and sync: ' + node['name'], flush=True)
+        print('Read-only cluster check passed; no node changes requested.', flush=True)
+    elif operation == 'snapshot':
         if argument not in actual:
             raise ValueError('Snapshot source is not in the managed pool')
         fleet.snapshot(argument)

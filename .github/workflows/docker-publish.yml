@@ -21,6 +21,9 @@ env:
 
 jobs:
   build-and-push:
+    # Adiri releases use the approval-gated ACR controller. Enable this legacy
+    # Docker Hub/GHCR publisher only when its separate credentials are configured.
+    if: vars.LEGACY_DOCKER_PUBLISH_ENABLED == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
