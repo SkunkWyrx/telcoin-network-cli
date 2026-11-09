@@ -1,0 +1,52 @@
+{
+  "network": "adiri",
+  "pool": "adiri",
+  "subscription": "8a149d4d-c52a-4432-929e-de754584e269",
+  "resource_group": "oprail-observer-adiri",
+  "source_resource_group": "telcoin-network-testnet",
+  "location": "centralus",
+  "registry": "acaenvacrxvyzqyxhfzsno",
+  "registry_resource_group": "telcoin-network-testnet",
+  "repository": "telcoin-observer/adiri",
+  "git_repository": "https://github.com/Telcoin-Association/telcoin-network.git",
+  "features": "adiri",
+  "reference_rpc": "https://rpc.adiri.tel",
+  "chain_id": "0x7e1",
+  "max_lag": 3,
+  "poll_seconds": 10,
+  "health_ttl_seconds": 30,
+  "upgrade_timeout_seconds": 7200,
+  "ready_samples": 3,
+  "drain_seconds": 30,
+  "allow_single_node_maintenance": false,
+  "snapshot_interval_hours": 4,
+  "snapshot_retention_days": 7,
+  "automation_enabled": false,
+  "ssh_key": "~/.ssh/id_ed25519",
+  "ssh_user": "azureuser",
+  "observer_vnet": "oprail-observer-adiri-vnet",
+  "observer_subnet": "observer",
+  "private_ip": "10.52.0.10",
+  "private_dns_name": "",
+  "planned_dns_name": "adiri-orbs.oprail.com",
+  "api_resource_group": "oprail-api-adiri",
+  "api_cidr": "10.51.0.0/16",
+  "nodes": [
+    {
+      "name": "telcoin-observer-vm-1",
+      "ordinal": 1,
+      "host": "adiri-oprail-observer-1.centralus.cloudapp.azure.com"
+    }
+  ],
+  "private_rpc_source_cidrs": "10.51.0.0/16,10.52.2.0/27",
+  "public_rpc": {
+    "hostname": "adiri-orbs.oprail.com",
+    "frontend": "20.12.235.224",
+    "load_balancer": "adiri-observers-public",
+    "public_ip_name": "adiri-observers-public-ip",
+    "issuer": "telcoin-observer-vm-1",
+    "vault": "oprail-adiri-rpc-tls",
+    "secret": "adiri-rpc-cert-bundle",
+    "proxy_image": "nginx@sha256:583b7f2fce1cdb8da5ad5c39ebd3c33b98b87d493190e548bdee1fa8c619c311"
+  }
+}

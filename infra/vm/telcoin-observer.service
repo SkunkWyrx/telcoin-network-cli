@@ -1,0 +1,23 @@
+[Unit]
+Description=Telcoin Adiri observer
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+RequiresMountsFor=/var/lib/telcoin/db /var/lib/telcoin/consensus-db /var/lib/telcoin/static_files
+ConditionPathExists=/etc/telcoin/observer.env
+
+[Service]
+Type=simple
+ExecStartPre=/usr/bin/mountpoint -q /var/lib/telcoin/db
+ExecStartPre=/usr/bin/mountpoint -q /var/lib/telcoin/consensus-db
+ExecStartPre=/usr/bin/mountpoint -q /var/lib/telcoin/static_files
+ExecStartPre=-/usr/bin/docker rm -f telcoin-observer
+ExecStart=/usr/local/sbin/telcoin-start-observer
+ExecStop=-/usr/bin/docker stop --time 120 telcoin-observer
+Restart=on-failure
+RestartSec=15
+TimeoutStartSec=600
+TimeoutStopSec=150
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,14 @@
+{
+  "network": "adiri",
+  "validated": true,
+  "build_run": "cj7",
+  "repository": "https://github.com/ArieJones/telcoin-network.git",
+  "commit": "6955e3b87221659c23ceeb8159f1daa17d10d52d",
+  "features": "adiri",
+  "image": "acaenvacrxvyzqyxhfzsno.azurecr.io/telcoin-observer/adiri@sha256:2ae89b07562213de25ce6912abe1d6f79af542372ddc635ac95999c53679894a",
+  "validation": "Live Adiri: Observer 2 restored and joined public HTTPS; five fresh HTTPS RPCs succeeded while Observer 1 was stopped; Observer 1 restarted on this digest and passed three fresh sync checks. Both nodes matched the reference at block 525290. Candidate is not promoted.",
+  "build_context_sha256": {
+    "src/docker/Dockerfile": "2a0f120bab0f5c48dcf39f55960d4157407a8523468df72ed8b90e35c8c6916d",
+    "src/docker/entrypoint.sh": "cc76864fa41db418eccf0246f7e3f940883c58d733b47325caa2577fe2cd68f9"
+  }
+}

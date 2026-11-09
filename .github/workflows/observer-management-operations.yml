@@ -1,0 +1,49 @@
+name: Observer management operation
+run-name: '${{ inputs.network }} / ${{ inputs.operation }} / ${{ inputs.requested_by }} / ${{ inputs.request_id }}'
+on:
+  workflow_dispatch:
+    inputs:
+      network:
+        type: choice
+        options: [adiri]
+        required: true
+      operation:
+        type: choice
+        options: [add, remove, build, upgrade, upgrade-tag, snapshot]
+        required: true
+      argument:
+        required: true
+        type: string
+      requested_by:
+        required: true
+        type: string
+      request_id:
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: observer-lifecycle-${{ inputs.network }}
+  cancel-in-progress: false
+jobs:
+  operate:
+    if: github.ref == 'refs/heads/main'
+    environment: observer-operations-${{ inputs.network }}
+    runs-on: [self-hosted, observer-operations]
+    timeout-minutes: 1440
+    env:
+      OBSERVER_STATE_DIR: /var/lib/oprail-observers
+      NETWORK: ${{ inputs.network }}
+      OPERATION: ${{ inputs.operation }}
+      PYTHONUNBUFFERED: '1'
+      REQUEST_ID: ${{ inputs.request_id }}
+      ARGUMENT: ${{ inputs.argument }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: az login --identity --output none
+      - name: Execute approved request with membership and policy guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$NETWORK" in adiri) ;; *) exit 1 ;; esac
+          python3 scripts/pool/management_operation.py --config "infra/pool/$NETWORK.json" --operation "$OPERATION" --argument "$ARGUMENT" --request-id "$REQUEST_ID"

@@ -1,0 +1,85 @@
+name: Observer management website
+on:
+  push:
+    branches: [main]
+    paths: ['src/Observer.Management/**', 'tests/Observer.Management.PolicyTests/**', '.github/workflows/observer-management-site.yml']
+  workflow_dispatch:
+    inputs:
+      network:
+        type: choice
+        options: [adiri]
+        default: adiri
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet run --project tests/Observer.Management.PolicyTests -c Release
+      - run: docker build --platform linux/amd64 -t observer-management:build src/Observer.Management
+      - run: docker save observer-management:build | gzip > management-image.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: management-site
+          path: management-image.tar.gz
+  deploy:
+    needs: build
+    strategy:
+      matrix:
+        network: [adiri]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # Configure required reviewers in BOTH GitHub environments before enabling.
+    environment: observer-management-${{ matrix.network }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        if: github.event_name == 'push' || inputs.network == matrix.network
+        with:
+          name: management-site
+      - uses: azure/login@v2
+        if: (github.event_name == 'push' || inputs.network == matrix.network) && vars.MANAGEMENT_DEPLOY_ENABLED == 'true'
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Validate management target and set network settings
+        if: (github.event_name == 'push' || inputs.network == matrix.network) && vars.MANAGEMENT_DEPLOY_ENABLED == 'true'
+        env:
+          REGISTRY: ${{ vars.MANAGEMENT_REGISTRY_NAME }}
+          APP: ${{ vars.MANAGEMENT_APP_NAME }}
+          RG: ${{ vars.MANAGEMENT_RESOURCE_GROUP }}
+          NETWORK: ${{ matrix.network }}
+          OBSERVER_RG: ${{ vars.OBSERVER_RESOURCE_GROUP }}
+          PUBLIC_LB: ${{ vars.OBSERVER_PUBLIC_LOAD_BALANCER }}
+          LB: ${{ vars.OBSERVER_LOAD_BALANCER }}
+          RPC: ${{ vars.OBSERVER_REFERENCE_RPC }}
+          CHAIN: ${{ vars.OBSERVER_CHAIN_ID }}
+          SUBSCRIPTION: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$APP" && test -n "$RG" && test -n "$RPC" && test -n "$CHAIN" && test -n "$LB" && test -n "$PUBLIC_LB"
+          test "$OBSERVER_RG" = "oprail-observer-$NETWORK"
+          test "$(az containerapp show -g "$RG" -n "$APP" --query tags.purpose -o tsv)" = oprail-observer-management
+          test "$(az containerapp show -g "$RG" -n "$APP" --query tags.network -o tsv)" = "$NETWORK"
+          test "$(az containerapp show -g "$RG" -n "$APP" --query 'properties.template.containers[0].name' -o tsv)" = management
+          server=$(az acr show -n "$REGISTRY" --query loginServer -o tsv)
+          configured=$(az containerapp show -g "$RG" -n "$APP" --query 'properties.configuration.registries[0].server' -o tsv)
+          test -n "$server" && test "$server" = "$configured"
+          az acr login -n "$REGISTRY"
+          docker load -i management-image.tar.gz
+          image="$server/observer-management/$NETWORK:$GITHUB_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          docker tag observer-management:build "$image"
+          docker push "$image"
+          pinned=$(docker image inspect "$image" --format '{{index .RepoDigests 0}}')
+          test "${pinned%@*}" = "$server/observer-management/$NETWORK"
+          az containerapp update -g "$RG" -n "$APP" --container-name management --image "$pinned" --output none --set-env-vars \
+            "Fleet__Network=$NETWORK" "Fleet__Subscription=$SUBSCRIPTION" "Fleet__ResourceGroup=$OBSERVER_RG" \
+            "Fleet__LoadBalancer=$LB" "Fleet__PublicLoadBalancer=$PUBLIC_LB" "Fleet__ReferenceRpc=$RPC" "Fleet__ChainId=$CHAIN"

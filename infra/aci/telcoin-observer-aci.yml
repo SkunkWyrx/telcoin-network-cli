@@ -1,0 +1,137 @@
+# =============================================================================
+# telcoin-observer-aci.yml
+#
+# Azure Container Instance deployment for the Telcoin observer node.
+# Mounts an Azure File Share at /app/data for persistent chain data and keys.
+#
+# Prerequisites (run once):
+#   1. Build and push the image:
+#        az acr build --registry oprailtelcoin \
+#          --resource-group oprail-telcoin-testnet \
+#          --image telcoin-observer:latest \
+#          --file src/docker/Dockerfile .
+#   2. Create the storage account and file share:
+#        chmod +x scripts/azure-setup-storage.sh
+#        ./scripts/azure-setup-storage.sh
+#   3. Fill in all <REPLACE_...> placeholders below before deploying.
+#
+# Deploy:
+#   az container create \
+#     --resource-group oprail-telcoin-testnet \
+#     --file infra/aci/telcoin-observer-aci.yml
+#
+# To spin up a second instance with different settings:
+#   Copy this file, change 'name', adjust environment variables, then deploy.
+# =============================================================================
+
+apiVersion: "2021-10-01"
+name: telcoin-observer-1            # Change per-instance (e.g. telcoin-observer-2)
+type: Microsoft.ContainerInstance/containerGroups
+location: eastus                    # Must match your resource group region
+properties:
+  osType: Linux
+  restartPolicy: OnFailure
+
+  # -------------------------------------------------------------------------
+  # Registry credentials
+  # Get these from: az acr credential show --name oprailtelcoin
+  # -------------------------------------------------------------------------
+  imageRegistryCredentials:
+    - server: oprailtelcoin.azurecr.io
+      username: <REPLACE_ACR_USERNAME>
+      password: <REPLACE_ACR_PASSWORD>
+
+  # -------------------------------------------------------------------------
+  # Volume: Azure File Share mounted at /app/data
+  # Get storage key from: az storage account keys list --account-name oprailtelcoindata
+  # -------------------------------------------------------------------------
+  volumes:
+    - name: telcoin-data
+      azureFile:
+        shareName: telcoin-data-v3
+        storageAccountName: oprailtelcoinprem
+        storageAccountKey: <REPLACE_STORAGE_ACCOUNT_KEY>
+
+  containers:
+    - name: telcoin-observer
+      properties:
+        image: oprailtelcoin.azurecr.io/telcoin-observer:latest
+
+        # ------------------------------------------------------------------
+        # Resources — tune to your VM size / cost requirements
+        # The node runs comfortably at 2 CPU / 4 GB during initial sync.
+        # You can reduce to 1 CPU / 2 GB once fully synced.
+        # ------------------------------------------------------------------
+        resources:
+          requests:
+            cpu: 2.0
+            memoryInGB: 4.0
+
+        # ------------------------------------------------------------------
+        # Ports — all three are required for full functionality
+        #   8545/TCP  — HTTP JSON-RPC
+        #   49590/UDP — primary P2P (QUIC)
+        #   49594/UDP — worker P2P  (QUIC)
+        # ------------------------------------------------------------------
+        ports:
+          - protocol: TCP
+            port: 8545
+          - protocol: UDP
+            port: 49590
+          - protocol: UDP
+            port: 49594
+
+        # ------------------------------------------------------------------
+        # Environment variables
+        # Adjust per-instance to run different chain / port configurations.
+        # TN_BLS_PASSPHRASE is required because ACI has no interactive TTY.
+        # ------------------------------------------------------------------
+        environmentVariables:
+          - name: DATADIR
+            value: /app/data
+          - name: CHAIN
+            value: adiri
+          - name: PRIMARY_LISTENER_MULTIADDR
+            value: /ip4/0.0.0.0/udp/49590/quic-v1
+          - name: WORKER_LISTENER_MULTIADDR
+            value: /ip4/0.0.0.0/udp/49594/quic-v1
+          - name: EXTERNAL_PRIMARY_MULTIADDR
+            value: <REPLACE_EXTERNAL_PRIMARY_MULTIADDR>
+          - name: EXTERNAL_WORKER_MULTIADDR
+            value: <REPLACE_EXTERNAL_WORKER_MULTIADDR>
+          # Keep the passphrase secret — use secureValue so it is not
+          # returned in future 'az container show' calls
+          - name: TN_BLS_PASSPHRASE
+            secureValue: <REPLACE_BLS_PASSPHRASE>
+
+        # ------------------------------------------------------------------
+        # Volume mount — maps the Azure File Share into the container
+        # ------------------------------------------------------------------
+        volumeMounts:
+          - name: telcoin-data
+            mountPath: /app/data
+
+  # -------------------------------------------------------------------------
+  # Diagnostics: ship container stdout/stderr to Azure Log Analytics
+  # Enables log querying, alerting, and live tailing from the Azure portal
+  # or via the watch-azure-aci.sh script.
+  # -------------------------------------------------------------------------
+  diagnostics:
+    logAnalytics:
+      workspaceId: <REPLACE_LOG_ANALYTICS_WORKSPACE_ID>
+      workspaceKey: <REPLACE_LOG_ANALYTICS_WORKSPACE_KEY>
+      logType: ContainerInsights
+
+  # -------------------------------------------------------------------------
+  # Expose ports on the container group's public IP
+  # -------------------------------------------------------------------------
+  ipAddress:
+    type: Public
+    dnsNameLabel: telcoin-observer-1    # Unique subdomain: <label>.eastus.azurecontainer.io
+    ports:
+      - protocol: TCP
+        port: 8545
+      - protocol: UDP
+        port: 49590
+      - protocol: UDP
+        port: 49594

@@ -1,12 +1,36 @@
 #!/bin/bash
-set -e
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT_DIR"
+
+if [[ -f ".env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source .env
+  set +a
+fi
 
 DOCKER_USERNAME=${DOCKER_USERNAME:-"yourusername"}
 IMAGE_NAME="telcoin-observer"
 VERSION=${1:-"latest"}
+GIT_BRANCH=${GIT_BRANCH:-"main"}
+GIT_TAG=${GIT_TAG-v0.16.0-adiri}
+GIT_REPO_URL=${GIT_REPO_URL:-"https://github.com/telcoin-association/telcoin-network.git"}
 
 echo "Building image..."
-docker build -t ${IMAGE_NAME}:${VERSION} -f src/docker/Dockerfile .
+if [[ -n "${GIT_TAG}" ]]; then
+  echo "Using git tag: ${GIT_TAG}"
+else
+  echo "GIT_TAG is empty; using git branch: ${GIT_BRANCH}"
+fi
+docker build \
+  --build-arg GIT_BRANCH="${GIT_BRANCH}" \
+  --build-arg GIT_TAG="${GIT_TAG}" \
+  --build-arg GIT_REPO_URL="${GIT_REPO_URL}" \
+  -t ${IMAGE_NAME}:${VERSION} \
+  -f src/docker/Dockerfile \
+  .
 
 echo "Tagging image..."
 docker tag ${IMAGE_NAME}:${VERSION} ${DOCKER_USERNAME}/${IMAGE_NAME}:${VERSION}

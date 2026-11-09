@@ -1,0 +1,18 @@
+[Unit]
+Description=Telcoin observer public HTTPS proxy
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStartPre=/usr/sbin/ip address replace @FRONTEND_IP@/32 dev lo
+ExecStart=/usr/bin/docker run --rm --name telcoin-rpc-tls --network host -v /etc/telcoin/rpc-tls:/rpc-tls:ro @IMAGE@ nginx -c /rpc-tls/nginx.conf -g "daemon off;"
+ExecReload=/usr/bin/docker kill --signal=HUP telcoin-rpc-tls
+ExecStop=/usr/bin/docker stop --time 15 telcoin-rpc-tls
+ExecStopPost=-/usr/sbin/ip address del @FRONTEND_IP@/32 dev lo
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=25
+
+[Install]
+WantedBy=multi-user.target

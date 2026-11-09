@@ -1,0 +1,19 @@
+{
+  "network": "mainnet",
+  "pool": "mainnet",
+  "subscription": "SET_SUBSCRIPTION",
+  "resource_group": "oprail-observer-mainnet",
+  "location": "SET_REGION",
+  "registry": "SET_REGISTRY",
+  "registry_resource_group": "SET_REGISTRY_GROUP",
+  "repository": "telcoin-observer/mainnet",
+  "git_repository": "https://github.com/Telcoin-Association/telcoin-network.git",
+  "features": "",
+  "reference_rpc": "SET_INDEPENDENT_MAINNET_RPC",
+  "chain_id": "SET_VERIFIED_MAINNET_CHAIN_ID",
+  "max_lag": 3,
+  "snapshot_interval_hours": 4,
+  "snapshot_retention_days": 7,
+  "automation_enabled": false,
+  "nodes": []
+}

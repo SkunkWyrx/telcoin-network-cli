@@ -1,0 +1,10 @@
+[Unit]
+Description=Renew the Adiri RPC certificate via delegated Azure DNS
+Wants=network-online.target
+After=network-online.target telcoin-rpc-tls.service
+
+[Service]
+Type=oneshot
+UMask=0077
+ExecStart=/usr/bin/certbot renew --non-interactive --cert-name adiri-orbs.oprail.com --config-dir /var/lib/oprail-acme/config --work-dir /var/lib/oprail-acme/work --logs-dir /var/lib/oprail-acme/logs
+TimeoutStartSec=15min

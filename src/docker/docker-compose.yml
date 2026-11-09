@@ -6,16 +6,21 @@ services:
       context: ../..
       dockerfile: src/docker/Dockerfile
       args:
-        # Specify the git branch or tag to build from (default: main)
-        # Examples: main, develop, v1.0.0, feature-branch-name
+        # Specify the git branch to build from (default: main)
+        # Used when GIT_TAG is explicitly empty
         GIT_BRANCH: ${GIT_BRANCH:-main}
+        # Specify the git tag to build from (preferred when set)
+        # If explicitly set to empty, Dockerfile will use GIT_BRANCH
+        GIT_TAG: ${GIT_TAG-v0.16.0-adiri}
+        # Specify the repository URL to clone during image build (default: upstream repo)
+        GIT_REPO_URL: ${GIT_REPO_URL:-https://github.com/telcoin-association/telcoin-network.git}
     image: telcoin-observer:latest
     container_name: telcoin-observer
     restart: unless-stopped
     
     # Volume for persistent data (keys, config, chain data)
     volumes:
-      - telcoin-data:/app/data
+      - telcoin-data-v3:/app/data
     
     # Load environment variables from .env file in project root
     # This ensures the .env file is explicitly loaded
@@ -27,18 +32,23 @@ services:
     # Note: TN_BLS_PASSPHRASE is loaded from env_file above - don't override it here
     # If you put it in the environment section, it tries to substitute from shell, not .env
     environment:
+      RUST_LOG: "info"
       # Data directory (optional, defaults to /app/data)
       DATADIR: ${DATADIR:-/app/data}
-      # Network listener addresses (optional, defaults to IPv6)
-      PRIMARY_LISTENER_MULTIADDR: ${PRIMARY_LISTENER_MULTIADDR:-/ip6/::/udp/49590/quic-v1}
-      WORKER_LISTENER_MULTIADDR: ${WORKER_LISTENER_MULTIADDR:-/ip6/::/udp/49594/quic-v1}
+      # Network listener addresses (optional, defaults to IPv4)
+      PRIMARY_LISTENER_MULTIADDR: ${PRIMARY_LISTENER_MULTIADDR:-/ip4/0.0.0.0/udp/49590/quic-v1}
+      WORKER_LISTENER_MULTIADDR: ${WORKER_LISTENER_MULTIADDR:-/ip4/0.0.0.0/udp/49594/quic-v1}
       # Chain to connect to (optional, defaults to adiri)
       CHAIN: ${CHAIN:-adiri}
     
     # Network configuration
     # Expose RPC port (8545) if you want to access it from host
+    # P2P QUIC ports (UDP) required for peer discovery and epoch sync
     ports:
       - "8545:8545"
+      - "8546:8546"
+      - "49590:49590/udp"
+      - "49594:49594/udp"
     
     # For interactive passphrase, use stdin_open and tty
     # Enable these for interactive mode (when TN_BLS_PASSPHRASE is not set)
@@ -46,5 +56,5 @@ services:
     tty: true
 
 volumes:
-  telcoin-data:
+  telcoin-data-v3:
     driver: local

@@ -1,0 +1,43 @@
+name: Observer lifecycle (opt-in)
+on:
+  workflow_dispatch:
+    inputs:
+      network:
+        type: choice
+        options: [adiri]
+        default: adiri
+      operation:
+        type: choice
+        options: [plan, snapshot-tick]
+        default: plan
+  schedule:
+    - cron: '17 * * * *'
+permissions:
+  contents: read
+concurrency:
+  group: observer-lifecycle-${{ inputs.network || 'adiri' }}
+  cancel-in-progress: false
+jobs:
+  maintenance:
+    # No hosted runner has a route to private RPC. Provision this dedicated, trusted
+    # runner explicitly; do not run this workflow on pull_request or untrusted code.
+    if: vars.OBSERVER_AUTOMATION_ENABLED == 'true'
+    runs-on: [self-hosted, observer-operations]
+    env:
+      OBSERVER_STATE_DIR: /var/lib/oprail-observers
+      OBSERVER_NETWORK: ${{ inputs.network || 'adiri' }}
+      OBSERVER_OPERATION: ${{ inputs.operation || 'snapshot-tick' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Authenticate runner managed identity
+        run: az login --identity --output none
+      - name: Run configured lifecycle operation
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$OBSERVER_NETWORK" in adiri) ;; *) exit 1 ;; esac
+          case "$OBSERVER_OPERATION" in
+            plan) python3 scripts/pool/fleet.py --config "infra/pool/$OBSERVER_NETWORK.json" plan ;;
+            snapshot-tick) python3 scripts/pool/snapshot_tick.py --config "infra/pool/$OBSERVER_NETWORK.json" ;;
+            *) exit 1 ;;
+          esac

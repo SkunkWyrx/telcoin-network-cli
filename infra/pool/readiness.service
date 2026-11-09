@@ -1,0 +1,16 @@
+[Unit]
+Description=Observer sync-aware load balancer readiness
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 /usr/local/lib/telcoin/health.py --config /etc/telcoin/readiness.json
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

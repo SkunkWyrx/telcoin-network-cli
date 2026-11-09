@@ -1,0 +1,31 @@
+pid /tmp/nginx.pid;
+error_log /dev/stderr warn;
+events {}
+http {
+  access_log off;
+  server {
+    listen @FRONTEND_IP@:443 ssl;
+    server_name @HOSTNAME@;
+    ssl_certificate /rpc-tls/fullchain.pem;
+    ssl_certificate_key /rpc-tls/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    client_max_body_size 1m;
+    location = / {
+      limit_except POST { deny all; }
+      proxy_pass http://127.0.0.1:8545;
+      proxy_connect_timeout 3s;
+      proxy_read_timeout 60s;
+    }
+    location / { return 404; }
+  }
+  # Only the separate probe port can reach the readiness service.
+  server {
+    listen @BACKEND_IP@:19091;
+    location = /readyz {
+      proxy_pass http://127.0.0.1:9090/readyz;
+      proxy_connect_timeout 2s;
+      proxy_read_timeout 3s;
+    }
+    location / { return 404; }
+  }
+}

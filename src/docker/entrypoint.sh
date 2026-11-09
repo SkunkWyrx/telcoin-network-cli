@@ -6,6 +6,8 @@ DATADIR=${DATADIR:-/app/data}
 CHAIN=${CHAIN:-adiri}
 PRIMARY_LISTENER_MULTIADDR=${PRIMARY_LISTENER_MULTIADDR:-/ip6/::/udp/49590/quic-v1}
 WORKER_LISTENER_MULTIADDR=${WORKER_LISTENER_MULTIADDR:-/ip6/::/udp/49594/quic-v1}
+EXTERNAL_PRIMARY_MULTIADDR=${EXTERNAL_PRIMARY_MULTIADDR:-$PRIMARY_LISTENER_MULTIADDR}
+EXTERNAL_WORKER_MULTIADDR=${EXTERNAL_WORKER_MULTIADDR:-$WORKER_LISTENER_MULTIADDR}
 
 # Binary path (moved to /app/bin after build cleanup)
 BINARY="/app/bin/telcoin-network"
@@ -55,7 +57,9 @@ if [ ! -f "$DATADIR/node-keys/bls.kw" ] || [ ! -f "$DATADIR/node-keys/primary.se
             "$BINARY" keytool generate observer \
                 --datadir "$DATADIR" \
                 --address 0x4444444444444444444444444444444444444444 \
-                --bls-passphrase-source "$PASSPHRASE_SOURCE"
+                --bls-passphrase-source "$PASSPHRASE_SOURCE" \
+                --external-primary-addr "$EXTERNAL_PRIMARY_MULTIADDR" \
+                --external-worker-addrs "$EXTERNAL_WORKER_MULTIADDR"
         else
             echo "ERROR: No TTY available for interactive passphrase input." >&2
             echo "Please use one of the following:" >&2
@@ -68,7 +72,9 @@ if [ ! -f "$DATADIR/node-keys/bls.kw" ] || [ ! -f "$DATADIR/node-keys/primary.se
         "$BINARY" keytool generate observer \
             --datadir "$DATADIR" \
             --address 0x4444444444444444444444444444444444444444 \
-            --bls-passphrase-source "$PASSPHRASE_SOURCE"
+            --bls-passphrase-source "$PASSPHRASE_SOURCE" \
+            --external-primary-addr "$EXTERNAL_PRIMARY_MULTIADDR" \
+            --external-worker-addrs "$EXTERNAL_WORKER_MULTIADDR"
     fi
     
     echo "Observer keys generated successfully"
@@ -86,14 +92,30 @@ echo "Chain: $CHAIN"
 echo "Data directory: $DATADIR"
 echo "Primary listener: $PRIMARY_LISTENER_MULTIADDR"
 echo "Worker listener: $WORKER_LISTENER_MULTIADDR"
+echo "External primary addr: $EXTERNAL_PRIMARY_MULTIADDR"
+echo "External worker addr: $EXTERNAL_WORKER_MULTIADDR"
 echo "BLS passphrase source: $PASSPHRASE_SOURCE"
 echo "HTTP RPC will be available on: http://0.0.0.0:8545"
+
+HTTP_API=${HTTP_API:-eth,net,web3,rpc,debug,trace}
+WS_ENABLED=${WS_ENABLED:-false}
+WS_API=${WS_API:-$HTTP_API}
+case "$WS_ENABLED" in
+    true|false) ;;
+    *) echo "WS_ENABLED must be true or false" >&2; exit 1 ;;
+esac
+WS_ARGS=()
+if [ "$WS_ENABLED" = true ]; then
+    WS_ARGS=(--ws --ws.addr 0.0.0.0 --ws.port 8546 --ws.api "$WS_API")
+    echo "WebSocket RPC will be available on: ws://0.0.0.0:8546"
+fi
 
 exec "$BINARY" node -vvv \
     --http \
     --http.addr 0.0.0.0 \
     --http.port 8545 \
-    --observer \
+    --http.api "$HTTP_API" \
+    "${WS_ARGS[@]}" \
     --chain "$CHAIN" \
     --bls-passphrase-source "$PASSPHRASE_SOURCE" \
     --datadir "$DATADIR"

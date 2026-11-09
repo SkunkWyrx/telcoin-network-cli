@@ -1,60 +1,45 @@
 # ============================================================================
 # Builder Stage - Contains all build dependencies and builds the binary
 # ============================================================================
-FROM ubuntu:24.04 AS builder
+FROM rust:1.94-slim-bookworm AS builder
 
-USER root
-ENV USER=root
+ENV RUSTUP_TOOLCHAIN=1.94
 
-# Build argument for git branch/tag (defaults to main)
+# Build arguments for git ref and repository URL
+ARG NETWORK_FEATURES=adiri
 ARG GIT_BRANCH=main
+ARG GIT_TAG=v0.16.0-adiri
+ARG GIT_REPO_URL=https://github.com/telcoin-association/telcoin-network.git
 ENV GIT_BRANCH=${GIT_BRANCH}
+ENV GIT_TAG=${GIT_TAG}
+ENV GIT_REPO_URL=${GIT_REPO_URL}
 
 # Install build dependencies
 RUN apt-get update \
-    && apt-get install -y \
-    apt-utils \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     build-essential \
     git \
-    curl \
+    cmake \
     pkg-config \
     libssl-dev \
-    libssl3 \
-    clang \
-    cmake \
-    gcc \
-    protobuf-compiler \
-    libprotobuf-dev \
+    libclang-16-dev \
+    libapr1-dev \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Rust
-RUN curl https://sh.rustup.rs -sSf > /tmp/rustup-init.sh \
-    && chmod +x /tmp/rustup-init.sh \
-    && sh /tmp/rustup-init.sh -y \
-    && rm -rf /tmp/rustup-init.sh
-ENV PATH="/root/.cargo/bin:${PATH}"
-
-# Update the local crate index
-RUN /root/.cargo/bin/cargo search
-
-# Ensure stable Rust is installed and set as default (required: Rust 1.91+)
-RUN /root/.cargo/bin/rustup update stable \
-    && /root/.cargo/bin/rustup default stable \
-    && /root/.cargo/bin/rustc --version
-
-# Install nightly rust (optional, for future use)
-RUN /root/.cargo/bin/rustup install nightly
-
-# Clone telcoin-network repository (with specified branch)
+# Clone telcoin-network repository (prefer tag when provided, otherwise branch)
 WORKDIR /app
-RUN echo "Cloning telcoin-network repository from branch/tag: ${GIT_BRANCH}" && \
-    git clone --branch ${GIT_BRANCH} https://github.com/telcoin-association/telcoin-network.git /app/telcoin-network || \
-    (echo "Branch/tag ${GIT_BRANCH} not found, cloning default branch and checking out..." && \
-     git clone https://github.com/telcoin-association/telcoin-network.git /app/telcoin-network && \
-     cd /app/telcoin-network && \
-     git checkout ${GIT_BRANCH} 2>/dev/null || echo "Using default branch (${GIT_BRANCH} not found)") && \
-    echo "Repository cloned. Current branch/commit:" && \
-    cd /app/telcoin-network && git log -1 --oneline
+RUN set -eu; \
+    REF_TO_BUILD="${GIT_BRANCH}"; \
+    if [ -n "${GIT_TAG}" ]; then REF_TO_BUILD="${GIT_TAG}"; fi; \
+    echo "Cloning ${GIT_REPO_URL} at ${REF_TO_BUILD}"; \
+    git clone "${GIT_REPO_URL}" /app/telcoin-network; \
+    cd /app/telcoin-network; \
+    git checkout --detach "${REF_TO_BUILD}"; \
+    if [ -n "${GIT_TAG}" ]; then \
+      test "$(git rev-parse HEAD)" = "$(git rev-parse "refs/tags/${GIT_TAG}^{commit}")"; \
+    fi; \
+    git log -1 --oneline
 
 # Fix submodule URL for tn-contracts (replace ssh with https)
 # Need to fix both .gitmodules and .git/config, and handle case variations
@@ -81,26 +66,29 @@ RUN echo "Checking submodule status..." && \
     git submodule status && \
     echo "Submodules initialized successfully"
 
-# Build the telcoin-network node with redb feature
+# Build the telcoin-network node
+# --features adiri enables adiri support for testnet (adiri)
 # Set CARGO_NET_GIT_FETCH_WITH_CLI=true to avoid issues with git operations
 ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
 WORKDIR /app/telcoin-network
-RUN echo "Starting cargo build with redb feature..." && \
-    /root/.cargo/bin/cargo build --bin telcoin-network --release --features redb
+RUN if [ -n "$NETWORK_FEATURES" ]; then \
+      cargo build --bin telcoin-network --release --features "$NETWORK_FEATURES"; \
+    else \
+      cargo build --bin telcoin-network --release; \
+    fi
 
 # ============================================================================
 # Runtime Stage - Minimal image with only the binary and runtime dependencies
 # ============================================================================
-FROM ubuntu:24.04
-
-USER root
-ENV USER=root
+FROM debian:bookworm-slim
 
 # Install only runtime dependencies (no build tools)
 RUN apt-get update \
-    && apt-get install -y \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     ca-certificates \
+    libapr1 \
     libssl3 \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 # Create app directories

@@ -1,0 +1,9 @@
+[Unit]
+Description=Refresh the Adiri HTTPS proxy certificate from Key Vault
+After=network-online.target telcoin-rpc-tls.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+UMask=0077
+ExecStart=/usr/bin/python3 /etc/telcoin/cert-sync.py pull

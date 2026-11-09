@@ -7,3 +7,22 @@ dist/
 *.swp
 *.swo
 *~
+
+# Private per-observer settings and local snapshot manifests
+.env.*
+!.env.example
+snapshots/
+
+# Local fleet locks and release/snapshot manifests
+.observer-state/
+
+__pycache__/
+*.pyc
+
+# .NET generated artifacts
+**/bin/
+**/obj/
+
+# Per-user editor state and generated Aspire cache
+.vscode/
+*.lscache
