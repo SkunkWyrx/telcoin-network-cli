@@ -44,7 +44,7 @@ var builder = Microsoft.AspNetCore.Builder.WebApplication.CreateBuilder();
 builder.WebHost.UseSetting("urls", "http://127.0.0.1:0");
 await using var app = builder.Build();
 FleetEndpoints.MapStatus(app.MapGroup(""), _ => Task.FromResult<object>(new {
-    referenceBlock = 123L, nodes = new[] { new { name = "observer-1", block = 123L }, new { name = "observer-2", block = 122L } }
+    referenceBlock = 123L, nodes = new[] { new { name = "observer-1", clientVersion = "telcoin-network/v0.17.0", block = 123L }, new { name = "observer-2", clientVersion = "telcoin-network/v0.16.0", block = 122L } }
 }));
 await app.StartAsync();
 try {
@@ -54,5 +54,6 @@ try {
     Check(response.Content.Headers.ContentType?.MediaType == "application/json", "Status endpoint writes JSON content type");
     var body = System.Text.Json.Nodes.JsonNode.Parse(await response.Content.ReadAsStringAsync())!;
     Check(body["referenceBlock"]!.GetValue<long>() == 123 && body["nodes"]!.AsArray().Count == 2, "Status endpoint serializes reference and both nodes");
+    Check(body["nodes"]![0]!["clientVersion"]!.GetValue<string>() == "telcoin-network/v0.17.0" && body["nodes"]![1]!["clientVersion"]!.GetValue<string>() == "telcoin-network/v0.16.0", "Node versions are serialized independently during mixed-version rollouts");
 } finally { await app.StopAsync(); }
-Console.WriteLine("3 HTTP response checks passed.");
+Console.WriteLine("4 HTTP response checks passed.");

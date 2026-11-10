@@ -137,6 +137,11 @@ class Remote(HttpContext context, IConfiguration config, HttpClient client) {
                 var power = vm["statuses"]!.AsArray().Select(s => s!["code"]!.GetValue<string>()).FirstOrDefault(s => s.StartsWith("PowerState/")) ?? "unknown";
                 if (power != "PowerState/running") return (object)new { name = member.Key, inPublicPool = publicMembers.ContainsKey(member.Key), power, state = "offline", block = (long?)null, lag = (long?)null, trafficReady = (bool?)null };
                 var endpoint = $"http://{member.Value}:8545";
+                // Version reporting is optional; a disabled web3 namespace must
+                // not hide an otherwise reachable node's sync status.
+                string? clientVersion = null;
+                try { clientVersion = (await Rpc(endpoint, "web3_clientVersion", [])).GetValue<string>(); }
+                catch { }
                 var chain = Height(await Rpc(endpoint, "eth_chainId", []));
                 var block = Height(await Rpc(endpoint, "eth_blockNumber", []));
                 var common = "0x" + Math.Min(head, block).ToString("x");
@@ -144,7 +149,7 @@ class Remote(HttpContext context, IConfiguration config, HttpClient client) {
                 var canonical = await Rpc(reference, "eth_getBlockByNumber", [common, false]);
                 var hashMatches = local["hash"] is not null && local["hash"]!.GetValue<string>() == canonical["hash"]?.GetValue<string>();
                 var synced = chain == Height(networkChain) && Math.Abs(head - block) <= config.GetValue<int>("Fleet:MaxLag", 3) && hashMatches;
-                return (object)new { name = member.Key, inPublicPool = publicMembers.ContainsKey(member.Key), power, state = synced ? "synced" : "behind or divergent", block = (long?)block, lag = (long?)(head - block), trafficReady = await TrafficReady(member.Value) };
+                return (object)new { name = member.Key, inPublicPool = publicMembers.ContainsKey(member.Key), power, clientVersion, state = synced ? "synced" : "behind or divergent", block = (long?)block, lag = (long?)(head - block), trafficReady = await TrafficReady(member.Value) };
             } catch { return (object)new { name = member.Key, inPublicPool = publicMembers.ContainsKey(member.Key), power = "unknown", state = "unreachable", block = (long?)null, lag = (long?)null, trafficReady = (bool?)null }; }
         }));
         return new { referenceBlock = head, referenceRpc = reference, observedAt = DateTimeOffset.UtcNow, nodes };
