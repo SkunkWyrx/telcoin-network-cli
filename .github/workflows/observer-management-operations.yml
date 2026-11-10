@@ -9,7 +9,7 @@ on:
         required: true
       operation:
         type: choice
-        options: [check, add, remove, build, upgrade, upgrade-tag, snapshot]
+        options: [check, add, remove, build, upgrade, upgrade-tag, recover-tag, snapshot]
         required: true
       argument:
         required: true

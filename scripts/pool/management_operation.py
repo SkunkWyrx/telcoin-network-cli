@@ -19,6 +19,7 @@ def validate(operation, argument):
                 'snapshot': r'[A-Za-z0-9][A-Za-z0-9-]{0,63}',
                 'build': r'refs/(tags|heads)/[A-Za-z0-9._/-]+',
                 'upgrade-tag': r'v[0-9]+\.[0-9]+\.[0-9]+(?:[.-][A-Za-z0-9._-]+)?',
+                'recover-tag': r'v[0-9]+\.[0-9]+\.[0-9]+(?:[.-][A-Za-z0-9._-]+)?',
                 'upgrade': r'[a-z0-9./-]+@sha256:[a-f0-9]{64}'}
     if operation not in patterns or len(argument) > 300 or not re.fullmatch(patterns[operation], argument):
         raise ValueError('Invalid management operation')
@@ -78,19 +79,24 @@ def run(fleet, operation, argument, env_root=Path('/etc/oprail-observers')):
         if len(actual) < 2 or argument not in actual:
             raise ValueError('Cannot remove final or unknown observer')
         fleet.remove(argument)
-    elif operation == 'upgrade-tag':
+    elif operation in ('upgrade-tag', 'recover-tag'):
         if fleet.c['network'] == 'adiri' and not argument.endswith('-adiri'):
             raise ValueError('Adiri upgrades require an Adiri release tag')
         if fleet.c['network'] == 'mainnet' and 'adiri' in argument:
             raise ValueError('An Adiri tag cannot be deployed to mainnet')
-        print('Stage: resolve tag and build pinned candidate', flush=True)
-        fleet.build('refs/tags/' + argument)
+        if operation == 'upgrade-tag':
+            print('Stage: resolve tag and build pinned candidate', flush=True)
+            fleet.build('refs/tags/' + argument)
         release = json.loads((fleet.state / 'candidate.json').read_text())
         if release.get('network') != fleet.c['network'] or release.get('ref') != 'refs/tags/' + argument:
             raise ValueError('Build candidate does not match requested network and tag')
         image = pinned_image(release['image'])
         print('Stage: roll out one node at a time with sync gates', flush=True)
-        fleet.upgrade(image)
+        if operation == 'recover-tag':
+            print('Explicit recovery: cold backup of each node before migration; first node must sync before continuing', flush=True)
+            fleet.upgrade(image, recovery=True)
+        else:
+            fleet.upgrade(image)
         print('Stage: promote only after all nodes pass rollout', flush=True)
         fleet.promote(image)
     elif operation == 'upgrade':

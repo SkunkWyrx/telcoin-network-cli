@@ -15,7 +15,7 @@ DOCKER_USERNAME=${DOCKER_USERNAME:-"yourusername"}
 IMAGE_NAME="telcoin-observer"
 VERSION=${1:-"latest"}
 GIT_BRANCH=${GIT_BRANCH:-"main"}
-GIT_TAG=${GIT_TAG-v0.16.0-adiri}
+GIT_TAG=${GIT_TAG-v0.17.0-adiri}
 GIT_REPO_URL=${GIT_REPO_URL:-"https://github.com/telcoin-association/telcoin-network.git"}
 
 echo "Building image..."

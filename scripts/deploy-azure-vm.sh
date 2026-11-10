@@ -60,7 +60,7 @@ ADMIN="${VM_ADMIN_USERNAME:-azureuser}"
 : "${SSH_SOURCE_CIDR:?Set SSH_SOURCE_CIDR to your administrative IP/CIDR}"
 : "${SSH_PUBLIC_KEY_FILE:?Set SSH_PUBLIC_KEY_FILE}"
 [[ -r "$SSH_PUBLIC_KEY_FILE" ]] || { echo 'Cannot read SSH public key' >&2; exit 1; }
-GIT_TAG="${GIT_TAG-v0.16.0-adiri}"
+GIT_TAG="${GIT_TAG-v0.17.0-adiri}"
 GIT_BRANCH="${GIT_BRANCH:-main}"
 GIT_REPO_URL="${GIT_REPO_URL:-https://github.com/telcoin-association/telcoin-network.git}"
 IMAGE_REPO="${IMAGE_REPO:-telcoin-observer}"

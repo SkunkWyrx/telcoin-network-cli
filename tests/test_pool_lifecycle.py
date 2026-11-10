@@ -183,6 +183,79 @@ class UpgradeTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'two nodes'):
                 fleet.upgrade(self.image)
 
+    def test_normal_upgrade_still_refuses_unsynced_pool(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fleet = self.fleet(directory)
+            fleet.synced = lambda _: False
+            fleet.ssh = Mock()
+            with self.assertRaisesRegex(RuntimeError, 'All nodes'): fleet.upgrade(self.image)
+            fleet.ssh.assert_not_called()
+
+    @patch('fleet.time.sleep')
+    def test_recovery_backs_up_before_migration_and_waits_before_next_node(self, _sleep):
+        with tempfile.TemporaryDirectory() as directory:
+            fleet = self.fleet(directory)
+            events = []
+            fleet.synced = lambda _: True
+            fleet.ssh = lambda n, s: events.append((n['name'], s)) or self.image + '\n'
+            fleet.recovery_backup = lambda n: events.append((n['name'], 'BACKUP'))
+            fleet.wait_synced = lambda n: events.append((n['name'], 'SYNC'))
+            fleet.upgrade(self.image, recovery=True)
+            backup = events.index(('b', 'BACKUP'))
+            migration = next(i for i, (_, s) in enumerate(events) if 'image.conf.before-upgrade' in s)
+            self.assertLess(backup, migration)
+            self.assertLess(events.index(('b', 'SYNC')), next(i for i, (n, _) in enumerate(events) if n == 'a'))
+
+    @patch('fleet.time.sleep')
+    def test_recovery_backup_failure_prevents_migration_and_next_node(self, _sleep):
+        with tempfile.TemporaryDirectory() as directory:
+            fleet = self.fleet(directory)
+            fleet.synced = lambda _: False
+            fleet.ssh = Mock(return_value='')
+            fleet.recovery_backup = Mock(side_effect=RuntimeError('copy incomplete'))
+            with self.assertRaisesRegex(RuntimeError, 'copy incomplete'): fleet.upgrade(self.image, recovery=True)
+            self.assertEqual({c.args[0]['name'] for c in fleet.ssh.call_args_list}, {'b'})
+            self.assertFalse(any('image.conf.before-upgrade' in c.args[1] for c in fleet.ssh.call_args_list))
+
+    @patch('fleet.time.sleep')
+    def test_recovery_stops_if_first_node_cannot_sync(self, _sleep):
+        with tempfile.TemporaryDirectory() as directory:
+            fleet = self.fleet(directory)
+            fleet.synced = lambda _: False
+            fleet.ssh = Mock(return_value='')
+            fleet.recovery_backup = Mock()
+            fleet.wait_synced = Mock(side_effect=RuntimeError('sync failed'))
+            with self.assertRaisesRegex(RuntimeError, 'sync failed'): fleet.upgrade(self.image, recovery=True)
+            self.assertEqual({c.args[0]['name'] for c in fleet.ssh.call_args_list}, {'b'})
+
+    @patch('fleet.time.sleep')
+    def test_recovery_rechecks_first_node_before_touching_second(self, _sleep):
+        with tempfile.TemporaryDirectory() as directory:
+            fleet = self.fleet(directory)
+            fleet.synced = lambda _: False
+            fleet.ssh = Mock(return_value=self.image + '\n')
+            fleet.recovery_backup = Mock()
+            fleet.wait_synced = Mock()
+            with self.assertRaisesRegex(RuntimeError, 'no longer synced'): fleet.upgrade(self.image, recovery=True)
+            self.assertEqual({c.args[0]['name'] for c in fleet.ssh.call_args_list}, {'b'})
+
+    def test_recovery_copy_failure_restores_old_service_and_never_publishes_seed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fleet = self.fleet(directory)
+            node = fleet.c['nodes'][0]
+            fleet.vm = lambda _: {'storageProfile': {'dataDisks': [{'lun': 0, 'managedDisk': {'id': '/execution'}}, {'lun': 1, 'managedDisk': {'id': '/consensus'}}]}}
+            fleet.c['location'] = 'centralus'
+            fleet.c['resource_group'] = 'observers'
+            fleet.c['snapshot_copy_timeout_seconds'] = 0
+            fleet.ssh = Mock()
+            fleet.az = Mock(side_effect=lambda *a: {'id': '/' + a[a.index('-n') + 1]} if a[:2] == ('snapshot', 'create') else {})
+            with self.assertRaisesRegex(RuntimeError, 'copies incomplete'): fleet.recovery_backup(node)
+            self.assertTrue(any(c.args[:2] == ('vm', 'start') for c in fleet.az.call_args_list))
+            self.assertIn('systemctl start telcoin-observer', fleet.ssh.call_args_list[-1].args[1])
+            self.assertFalse((fleet.state / 'latest-snapshot.json').exists())
+            creates = [c for c in fleet.az.call_args_list if c.args[:2] == ('snapshot', 'create')]
+            self.assertTrue(all('managed-by=oprail-observer-recovery' in c.args for c in creates))
+
     def test_runtime_inventory_survives_unchanged_checkout_profile(self):
         with tempfile.TemporaryDirectory() as directory:
             fleet = self.fleet(directory)

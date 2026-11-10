@@ -8,7 +8,7 @@ ENV RUSTUP_TOOLCHAIN=1.94
 # Build arguments for git ref and repository URL
 ARG NETWORK_FEATURES=adiri
 ARG GIT_BRANCH=main
-ARG GIT_TAG=v0.16.0-adiri
+ARG GIT_TAG=v0.17.0-adiri
 ARG GIT_REPO_URL=https://github.com/telcoin-association/telcoin-network.git
 ENV GIT_BRANCH=${GIT_BRANCH}
 ENV GIT_TAG=${GIT_TAG}

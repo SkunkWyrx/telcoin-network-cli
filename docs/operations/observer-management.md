@@ -137,6 +137,21 @@ validates inventory, VM tags, SSH and sync without changing nodes. Run and
 approve this before enabling panel controls. It uses the runner's protected
 profile rather than the laptop defaults committed under `infra/pool`.
 
+`recover-tag` is an explicit, approval-gated recovery operation for an already
+unsynced pool. First run `build` for the exact release tag; recovery requires
+that candidate and does not rebuild or use a mutable latest image. It preserves
+the normal upgrade's all-nodes-ready requirement: only this separate operation
+can begin while nodes are behind. Highest ordinal is recovered first. Before
+each image change, it verifies a graceful stop, deallocates the VM and captures
+both data disks, waiting for successful 100% copies. Recovery copies are tagged
+separately and are never published as provisioning seeds or pruned by the normal
+snapshot scheduler. Backup failure prevents migration; failed sync stops before
+the next node. A recovered node must remain synced before the next is touched.
+Both must pass before the new candidate is promoted. Database migrations are
+not automatically rolled back: restoring pre-migration disks is a separate
+operator action. For `v0.17.0-adiri`, upstream explicitly describes the consensus
+MDBX-to-tndb migration as one-way. Keep recovery snapshots until acceptance.
+
 To connect panel history, create a fine-grained GitHub token under
 <https://github.com/settings/personal-access-tokens/new> with resource owner
 `SkunkWyrx`, only repository `telcoin-network-cli`, and repository **Actions:

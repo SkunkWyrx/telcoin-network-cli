@@ -11,7 +11,7 @@ services:
         GIT_BRANCH: ${GIT_BRANCH:-main}
         # Specify the git tag to build from (preferred when set)
         # If explicitly set to empty, Dockerfile will use GIT_BRANCH
-        GIT_TAG: ${GIT_TAG-v0.16.0-adiri}
+        GIT_TAG: ${GIT_TAG-v0.17.0-adiri}
         # Specify the repository URL to clone during image build (default: upstream repo)
         GIT_REPO_URL: ${GIT_REPO_URL:-https://github.com/telcoin-association/telcoin-network.git}
     image: telcoin-observer:latest

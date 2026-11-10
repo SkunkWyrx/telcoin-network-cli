@@ -149,7 +149,7 @@ class Fleet:
             candidate['validated'] = True
             self.save('latest-release.json', candidate)
 
-    def upgrade(self, image):
+    def upgrade(self, image, recovery=False):
         image = pinned_image(image)
         expected = self.c['registry'] + '.azurecr.io/' + self.c['repository'] + '@'
         if not image.startswith(expected):
@@ -160,14 +160,19 @@ class Fleet:
         print('Sequential upgrade order:', ', '.join(n['name'] for n in nodes))
         if not self.apply:
             return
-        if not all(self.synced(node) for node in nodes):
+        if not recovery and not all(self.synced(node) for node in nodes):
             raise RuntimeError('All nodes must pass readiness before rolling upgrade begins')
+        completed = []
         for node in nodes:
+            if recovery and any(not self.synced(previous) for previous in completed):
+                raise RuntimeError('Previously recovered observer is no longer synced; stopping recovery')
             self.vm(node)
             self.ssh(node, 'docker pull ' + shlex.quote(image) + '\n')
             self.ssh(node, 'install -d /run/telcoin\ntouch /run/telcoin/draining\n')
             time.sleep(self.c.get('drain_seconds', 30))
             self.save('upgrade-progress.json', {'node': node['name'], 'image': image, 'state': 'drained'})
+            if recovery:
+                self.recovery_backup(node)
             script = ('cp -p /etc/telcoin/image.conf /etc/telcoin/image.conf.before-upgrade\n'
                       'systemctl stop telcoin-observer\n'
                       'python3 - <<\'PY\'\nfrom pathlib import Path\np=Path("/etc/telcoin/image.conf")\n'
@@ -184,6 +189,65 @@ class Fleet:
             self.ssh(node, 'rm /run/telcoin/draining\n')
             self.save('upgrade-progress.json', {'node': node['name'], 'image': image, 'state': 'ready'})
             print(node['name'], 'synced and returned to service')
+            completed.append(node)
+
+    def recovery_backup(self, node):
+        """Cold rollback copy of an unsynced node, never a provisioning snapshot."""
+        vm = self.vm(node)
+        disks = {d['lun']: d['managedDisk']['id'] for d in vm['storageProfile']['dataDisks']}
+        if set(disks) != {0, 1}:
+            raise ValueError('Recovery requires exactly the execution and consensus disks')
+        stamp = datetime.now(timezone.utc)
+        capture = 'recovery-' + node['name'] + '-' + stamp.strftime('%Y%m%dT%H%M%SZ')
+        created = []
+        try:
+            self.ssh(node, '''since=$(date -u +%FT%T.%NZ)
+id=$(docker inspect telcoin-observer --format '{{.Id}}')
+systemctl stop telcoin-observer
+test -z "$(docker ps -q --filter "id=$id")"
+events=$(docker events --since "$since" --until "$(date -u +%FT%T.%NZ)" --filter "container=$id" --filter event=die --format '{{.Actor.Attributes.exitCode}}')
+case "$events" in
+  0|143) ;;
+  *) echo "Cannot verify graceful observer exit; refusing migration backup" >&2; exit 1 ;;
+esac
+sync
+''')
+            self.az('vm', 'deallocate', '-g', self.c['resource_group'], '-n', node['name'])
+            for lun, kind in [(0, 'execution'), (1, 'consensus')]:
+                snapshot = self.az('snapshot', 'create', '-g', self.c['resource_group'],
+                                   '-n', capture + '-' + kind, '--location', self.c['location'],
+                                   '--source', disks[lun], '--incremental', 'true', '--tags',
+                                   'managed-by=oprail-observer-recovery', 'network=' + self.c['network'],
+                                   'node=' + node['name'], 'capture=' + capture, 'disk=' + kind,
+                                   'capture-status=pending', 'captured-at=' + stamp.isoformat())
+                created.append(snapshot['id'])
+            deadline = time.monotonic() + self.c.get('snapshot_copy_timeout_seconds', 14400)
+            while time.monotonic() < deadline:
+                copies = [self.az('snapshot', 'show', '--ids', resource) for resource in created]
+                if all(s.get('completionPercent') == 100 and s.get('provisioningState') == 'Succeeded' for s in copies):
+                    break
+                time.sleep(30)
+            else:
+                raise RuntimeError('Recovery backup copies incomplete; migration refused')
+            for resource in created:
+                self.az('tag', 'update', '--resource-id', resource, '--operation', 'Merge', '--tags', 'capture-status=complete')
+            self.save('recovery-backup-' + node['name'] + '.json', {
+                'node': node['name'], 'captured_at': stamp.isoformat(),
+                'execution': created[0], 'consensus': created[1], 'complete': True,
+                'provisioning_eligible': False})
+            print('Completed cold recovery backup for', node['name'], flush=True)
+        finally:
+            # No new binary has run yet. Recover the original service even if the
+            # copy failed, but retain its drain marker and propagate the failure.
+            self.az('vm', 'start', '-g', self.c['resource_group'], '-n', node['name'])
+            for attempt in range(60):
+                try:
+                    self.ssh(node, 'install -d /run/telcoin\ntouch /run/telcoin/draining\nsystemctl start telcoin-observer\n')
+                    break
+                except subprocess.CalledProcessError:
+                    if attempt == 59:
+                        raise
+                    time.sleep(5)
 
     def pairs(self):
         snapshots = self.az('snapshot', 'list', '-g', self.c['resource_group'])

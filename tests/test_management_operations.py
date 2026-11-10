@@ -127,6 +127,26 @@ class TagUpgradeTests(unittest.TestCase):
                     run(f, 'upgrade-tag', 'v0.16.0-adiri')
             f.promote.assert_not_called()
 
+    def test_recovery_uses_built_candidate_and_explicit_recovery_path(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            f, image = self.run_trial(tmp)
+            (f.state / 'candidate.json').write_text(json.dumps({'network': 'adiri', 'ref': 'refs/tags/v0.17.0-adiri', 'image': image}))
+            with patch('management_operation.reconcile', return_value={'one', 'two'}):
+                run(f, 'recover-tag', 'v0.17.0-adiri')
+            f.build.assert_not_called()
+            f.upgrade.assert_called_once_with(image, recovery=True)
+            f.promote.assert_called_once_with(image)
+
+    def test_recovery_rejects_candidate_for_another_tag(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            f, image = self.run_trial(tmp)
+            (f.state / 'candidate.json').write_text(json.dumps({'network': 'adiri', 'ref': 'refs/tags/v0.16.0-adiri', 'image': image}))
+            with patch('management_operation.reconcile', return_value={'one', 'two'}):
+                with self.assertRaisesRegex(ValueError, 'does not match'): run(f, 'recover-tag', 'v0.17.0-adiri')
+            f.upgrade.assert_not_called()
+
     def test_wrong_network_tag_does_not_build(self):
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as tmp:

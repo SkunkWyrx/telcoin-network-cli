@@ -53,7 +53,7 @@ GIT_TAG= GIT_BRANCH=develop docker compose -f src/docker/docker-compose.yml buil
 
 - `GIT_TAG= GIT_BRANCH=main` - Build from main branch
 - `GIT_TAG= GIT_BRANCH=develop` - Build from develop branch
-- `GIT_TAG=v0.16.0-adiri` - Build from the default release tag
+- `GIT_TAG=v0.17.0-adiri` - Build from the default release tag
 - `GIT_TAG= GIT_BRANCH=feature-branch` - Build from a feature branch
 
 #### Step 3: Start the Node
@@ -108,7 +108,7 @@ docker build -t telcoin-observer:latest -f src/docker/Dockerfile .
 docker build --build-arg GIT_TAG= --build-arg GIT_BRANCH=develop -t telcoin-observer:latest -f src/docker/Dockerfile .
 
 # Build from a specific tag (preferred)
-docker build --build-arg GIT_TAG=v0.16.0-adiri -t telcoin-observer:latest -f src/docker/Dockerfile .
+docker build --build-arg GIT_TAG=v0.17.0-adiri -t telcoin-observer:latest -f src/docker/Dockerfile .
 
 # Build from a feature branch
 docker build --build-arg GIT_TAG= --build-arg GIT_BRANCH=feature-branch -t telcoin-observer:latest -f src/docker/Dockerfile .
@@ -200,7 +200,7 @@ Environment variables are configured in the `.env` file in the project root. Cop
 | ---------------------------- | -------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `TN_BLS_PASSPHRASE`          | No\*     | -                           | BLS passphrase. If set, uses `--bls-passphrase-source env`. If not set, uses interactive mode (requires `-it` flag). \*Required for non-interactive mode |
 | `GIT_BRANCH`                 | No       | `main`                      | Git branch to build from when `GIT_TAG` is empty (e.g., `main`, `develop`, `feature-branch-name`)                                                     |
-| `GIT_TAG`                    | No       | `v0.16.0-adiri`             | Git tag to build from. When set, it is preferred over `GIT_BRANCH` (e.g., `v0.16.0-adiri`, `v1.0.0`)                                                  |
+| `GIT_TAG`                    | No       | `v0.17.0-adiri`             | Git tag to build from. When set, it is preferred over `GIT_BRANCH` (e.g., `v0.17.0-adiri`, `v1.0.0`)                                                  |
 | `GIT_REPO_URL`               | No       | upstream repo URL           | Repository URL to clone during image builds. Override this to build from a fork or alternate clone URL                                                  |
 | `DATADIR`                    | No       | `/app/data`                 | Data directory path for keys, config, and chain data                                                                                                     |
 | `PRIMARY_LISTENER_MULTIADDR` | No       | `/ip6/::/udp/49590/quic-v1` | Primary listener multiaddress (IPv6 default)                                                                                                             |
@@ -391,7 +391,7 @@ GIT_TAG= GIT_BRANCH=develop docker compose -f src/docker/docker-compose.yml buil
 GIT_TAG=v1.0.0 docker compose -f src/docker/docker-compose.yml build
 
 # Or set in .env file (example)
-echo "GIT_TAG=v0.16.0-adiri" >> .env
+echo "GIT_TAG=v0.17.0-adiri" >> .env
 docker compose -f src/docker/docker-compose.yml build
 ```
 
@@ -541,7 +541,7 @@ resource group and registry. VM quota/capacity must be available in that region.
 az login
 # Add the Azure VM settings from .env.example to your existing .env,
 # then fill in the subscription, registry, DNS label, SSH CIDR, keys,
-# and TN_BLS_PASSPHRASE. Keep GIT_TAG=v0.16.0-adiri.
+# and TN_BLS_PASSPHRASE. Keep GIT_TAG=v0.17.0-adiri.
 bash scripts/deploy-azure-vm.sh
 ```
 
@@ -616,7 +616,7 @@ throughput. See [Azure disk specifications](https://learn.microsoft.com/en-us/az
 
 ### Create another observer from chain-data snapshots
 
-First establish a healthy, syncing observer on `v0.16.0-adiri`. Capture its two data
+First establish a healthy, syncing observer on `v0.17.0-adiri`. Capture its two data
 disks with:
 
 ```bash
