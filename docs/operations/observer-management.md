@@ -1,6 +1,6 @@
 # Observer management website
 
-The .NET 10 management application is orchestrated by a separate Aspire 13.6 AppHost. It does not include an observer resource: starting Aspire or releasing this website cannot provision an observer, mount storage, or change an observer image. No live Azure resources were changed while implementing this application.
+The .NET 10 management application is orchestrated by a separate Aspire 13.6 AppHost. It does not include an observer resource: starting Aspire or releasing this website cannot provision an observer, mount storage, or change an observer image. The Adiri website and separate operations runner are deployed independently from the observer VMs.
 
 ## Architecture
 
@@ -27,7 +27,7 @@ Microsoft sign-in uses a **single tenant** confidential Entra web application wi
 1. Use a dedicated, unused subnet in the observer VNet, **/27 or larger** and delegated to `Microsoft.App/environments`. Keep the existing observer NSG allowance from that subnet's CIDR to TCP 8545. Do not reuse the VM or API subnet. No public observer RPC ingress is needed.
 2. Choose an ACR and a user-assigned managed identity with image pull rights on that registry (`AcrPull` for registry RBAC, or the equivalent repository-reader permission for an ABAC registry). The registry must allow ARM audience tokens for managed identity pull. Grant the identity no observer management permissions. The deployment references both resources without modifying them. [Microsoft setup instructions](https://learn.microsoft.com/azure/container-apps/managed-identity-image-pull).
 3. Build and deploy the first image using the commands below. Supply the Entra credentials through the deployment prompts. The management-only template creates a dedicated VNet-integrated Container Apps environment with a Consumption profile and a single management app. It uses HTTPS ingress with application-level Entra authentication. It does not create an App Service plan or deploy observer resources.
-4. Create protected GitHub environments `observer-management-adiri`, `observer-management-mainnet`, `observer-operations-adiri`, `observer-operations-mainnet`. Configure **required human reviewers**, prevent self-review where supported, and restrict deployment branches to `main`. Workflow environment references alone do **not** create approval policies. GitHub plan/repository visibility must support those protection rules; do not enable deployment/mutation without them.
+4. Create protected GitHub environments `observer-management-adiri` and `observer-operations-adiri`. Configure **required human reviewers** and restrict deployment branches to `main`. In a single-administrator setup, allow that administrator to approve their own requests. Workflow environment references alone do **not** create approval policies. GitHub plan/repository visibility must support those protection rules; do not enable deployment/mutation without them. Mainnet environments require a separate future setup.
 5. In each website environment set `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `MANAGEMENT_APP_NAME`, `MANAGEMENT_RESOURCE_GROUP`, `OBSERVER_RESOURCE_GROUP`, `OBSERVER_LOAD_BALANCER`, `OBSERVER_REFERENCE_RPC`, `OBSERVER_CHAIN_ID`, `OBSERVER_PUBLIC_LOAD_BALANCER`, and `MANAGEMENT_REGISTRY_NAME`. Configure Azure federated credentials for that GitHub environment. Grant the deployment identity read/update rights on the management Container App, registry metadata read, and push rights to its management image repository. Scope these grants as narrowly as the registry mode allows. It needs no rights to observer VMs or TelExplorer. Set `MANAGEMENT_DEPLOY_ENABLED=true` only after setup. The deployment verifies the target app's `purpose=oprail-observer-management` and matching network tags before updating its configuration.
 6. Install a trusted Linux self-hosted runner labeled `observer-operations`, with Azure CLI, Python 3, git, Bash and SSH, private networking, persistent `/var/lib/oprail-observers` and `/etc/oprail-observers`. Use exactly **one controller runner per pool**: the existing controller has a local file lock, not a cross-machine lease. Both lifecycle workflows use the same GitHub concurrency group. Give its managed identity observer lifecycle rights in the specific observer group, and build/pull/role-assignment rights at the existing ACR as required by the controller; do not grant subscription-wide Contributor by default. ACR role assignment provisioning requires additional authorization rights beyond VM Contributor.
 7. Use a runner-specific pool profile/SSH key path with a locked-down service key and pre-populated host keys. The checked-in Adiri profile's Mac SSH key path is a local operator default, not a production runner credential. Preserve node inventory and validated release/snapshot manifests in persistent state. For each add slot, prepare `/etc/oprail-observers/<network>/node-<1-99>.env` with unique VM/DNS names, fresh key passphrase, private RPC settings and desired disk configuration. These files are trusted shell configuration, owned by the runner administrator, mode 0600. The browser supplies only the numeric slot. Existing VM names and disks are rejected by the provisioning script.
@@ -70,7 +70,7 @@ Aspire remains the local AppHost. Azure uses the explicit management-only templa
 
 ## Build and release
 
-`observer-management-site.yml` builds on changes to the website on main and makes the same artifact available to the two protected deployment environments. Reviewers can approve either environment independently. A manual dispatch targets one network. Deploy steps push the tested image to the configured registry and update only the tagged Container App's image digest and network-specific settings in one revision. They never invoke `deploy-azure-vm.sh`, `deploy-pool.py`, or any VM deployment template.
+`observer-management-site.yml` builds on changes to the website on main and releases through the protected Adiri environment. Manual dispatch also targets Adiri only. Deploy steps push the tested image to the configured registry and update only the tagged Container App's image digest and network-specific settings in one revision. They never invoke `deploy-azure-vm.sh`, `deploy-pool.py`, or any VM deployment template.
 
 `observer-management-operations.yml` runs only main, after the chosen operations environment approves. GitHub workflow logs, run status, triggering account, requested Entra object ID and the web application's structured logs provide the execution trail. The dashboard links to the workflow history after submission; it does not yet stream job progress. Dispatch failures are not automatically retried because submission may have succeeded upstream.
 
@@ -120,6 +120,17 @@ setup; the explicit deployment approval is still required. Website CI uses a
 separate federated identity with app-scoped Contributor and registry push/read
 rights, with no observer VM rights. Registry legacy RBAC grants repository-wide
 push on that registry; changing its permission mode is a separate migration.
+
+The operations identity has Contributor only on `oprail-observer-adiri`, registry
+read/push/tasks roles on the existing ACR, and conditional RBAC administration
+limited to assigning AcrPull and the certificate secret-reader role to service
+principals at their specific scopes. A custom registry-group role permits nested
+deployment records and validation for new node registry access, without granting
+write access to TelExplorer or other application resources in that group.
+
+The website release was verified through a real human-approved GitHub deployment.
+Runner membership/SSH/sync acceptance is a separate `check` workflow approval;
+keep node controls and snapshot scheduling disabled until that check succeeds.
 
 The operations workflow also supports `check` with argument `cluster`: it
 validates inventory, VM tags, SSH and sync without changing nodes. Run and
