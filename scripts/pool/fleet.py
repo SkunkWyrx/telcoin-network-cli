@@ -167,7 +167,8 @@ class Fleet:
             if recovery and any(not self.synced(previous) for previous in completed):
                 raise RuntimeError('Previously recovered observer is no longer synced; stopping recovery')
             self.vm(node)
-            self.ssh(node, 'docker pull ' + shlex.quote(image) + '\n')
+            self.ssh(node, '/usr/local/sbin/telcoin-registry-login ' + shlex.quote(self.c['registry'] + '.azurecr.io') + '\n'
+                     'docker pull ' + shlex.quote(image) + '\n')
             self.ssh(node, 'install -d /run/telcoin\ntouch /run/telcoin/draining\n')
             time.sleep(self.c.get('drain_seconds', 30))
             self.save('upgrade-progress.json', {'node': node['name'], 'image': image, 'state': 'drained'})
