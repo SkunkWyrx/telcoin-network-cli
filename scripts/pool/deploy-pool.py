@@ -12,16 +12,23 @@ parser.add_argument('--config', default=str(ROOT / 'infra/pool/adiri.json'))
 parser.add_argument('--apply', action='store_true')
 args = parser.parse_args()
 c = json.loads(Path(args.config).read_text())
-# This implementation's topology is Adiri-specific; do not silently reuse its CIDRs on mainnet.
-if c['network'] != 'adiri':
-    raise SystemExit('Create a separate mainnet topology/parameter set before deployment')
-parameters = {'observerVnetName': c['observer_vnet'], 'observerSubnetName': c['observer_subnet'],
-              'privateIp': c['private_ip'], 'apiResourceGroup': c['api_resource_group'],
-              'privateDnsName': c.get('private_dns_name', '')}
+if c['network'] not in ('adiri', 'mainnet'):
+    raise SystemExit('Unsupported network')
+keys = {
+    'observer_vnet': 'observerVnetName', 'observer_subnet': 'observerSubnetName',
+    'private_ip': 'privateIp', 'api_resource_group': 'apiResourceGroup',
+    'load_balancer': 'loadBalancerName', 'observer_cidr': 'observerAddressPrefix',
+    'observer_subnet_cidr': 'observerSubnetPrefix', 'api_vnet': 'apiVnetName',
+    'api_cidr': 'apiAddressPrefix', 'api_subnet_cidr': 'apiSubnetPrefix',
+}
+if c['network'] == 'mainnet' and any(key not in c for key in keys):
+    raise SystemExit('Mainnet requires an explicit topology for every network parameter')
+parameters = {target: c[key] for key, target in keys.items() if key in c}
+parameters['privateDnsName'] = c.get('private_dns_name', '')
 with tempfile.NamedTemporaryFile('w', suffix='.json') as file:
     json.dump({'parameters': {key: {'value': value} for key, value in parameters.items()}}, file)
     file.flush()
     subprocess.run(['az', 'deployment', 'group', 'create' if args.apply else 'what-if',
                     '--subscription', c['subscription'], '-g', c['resource_group'],
-                    '-n', 'adiri-private-pool', '--template-file', str(ROOT / 'infra/pool/main.bicep'),
+                    '-n', c['network'] + '-private-pool', '--template-file', str(ROOT / 'infra/pool/main.bicep'),
                     '--parameters', '@' + file.name], check=True)

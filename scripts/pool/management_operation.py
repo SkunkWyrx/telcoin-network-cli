@@ -18,6 +18,7 @@ def validate(operation, argument):
     patterns = {'check': r'cluster', 'add': r'[1-9][0-9]?', 'remove': r'[A-Za-z0-9][A-Za-z0-9-]{0,63}',
                 'snapshot': r'[A-Za-z0-9][A-Za-z0-9-]{0,63}',
                 'build': r'refs/(tags|heads)/[A-Za-z0-9._/-]+',
+                'fresh-tag': r'v[0-9]+\.[0-9]+\.[0-9]+(?:[.-][A-Za-z0-9._-]+)?',
                 'upgrade-tag': r'v[0-9]+\.[0-9]+\.[0-9]+(?:[.-][A-Za-z0-9._-]+)?',
                 'recover-tag': r'v[0-9]+\.[0-9]+\.[0-9]+(?:[.-][A-Za-z0-9._-]+)?',
                 'upgrade': r'[a-z0-9./-]+@sha256:[a-f0-9]{64}'}
@@ -61,6 +62,21 @@ def run(fleet, operation, argument, env_root=Path('/etc/oprail-observers')):
     if operation == 'build':
         fleet.build(argument)
         return
+    pending_replacement = fleet.state / 'replacement.json' if operation == 'fresh-tag' else None
+    if pending_replacement and pending_replacement.exists():
+        replacement = json.loads(pending_replacement.read_text())
+        retiring = [s for s in replacement['steps'] if s['stage'] == 'retiring']
+        # Only finish the exact persisted cleanup before checking live membership.
+        for step in retiring:
+            candidate = json.loads((fleet.state / 'candidate.json').read_text())
+            if (candidate.get('network') != fleet.c['network'] or
+                    candidate.get('ref') != 'refs/tags/' + argument or candidate['image'] != replacement['image']):
+                raise ValueError('Resume the active replacement with its original tag')
+            new = next(n for n in fleet.c['nodes'] if n['name'] == step['name'])
+            fleet.wait_synced(new)
+            fleet.remove(step['old']['name'])
+            step['stage'] = 'completed'
+            fleet.save('replacement.json', replacement)
     actual = reconcile(fleet)
     if operation == 'check':
         for node in fleet.c['nodes']:
@@ -79,12 +95,23 @@ def run(fleet, operation, argument, env_root=Path('/etc/oprail-observers')):
         if len(actual) < 2 or argument not in actual:
             raise ValueError('Cannot remove final or unknown observer')
         fleet.remove(argument)
-    elif operation in ('upgrade-tag', 'recover-tag'):
+    elif operation in ('upgrade-tag', 'recover-tag', 'fresh-tag'):
+        if fleet.c['network'] == 'mainnet' and 'adiri' in argument:
+            raise ValueError('Mainnet upgrades require a mainnet release tag')
         if fleet.c['network'] == 'adiri' and not argument.endswith('-adiri'):
             raise ValueError('Adiri upgrades require an Adiri release tag')
-        if fleet.c['network'] == 'mainnet' and 'adiri' in argument:
-            raise ValueError('An Adiri tag cannot be deployed to mainnet')
-        if operation == 'upgrade-tag':
+        pending = fleet.state / 'replacement.json'
+        if operation == 'fresh-tag' and pending.exists():
+            previous = json.loads(pending.read_text())
+            if previous['status'] != 'completed':
+                candidate = json.loads((fleet.state / 'candidate.json').read_text())
+                if (candidate.get('network') != fleet.c['network'] or
+                        candidate.get('ref') != 'refs/tags/' + argument or candidate['image'] != previous['image']):
+                    raise ValueError('Resume the active replacement with its original tag')
+                fleet.replace_fresh(previous['image'])
+                fleet.promote(previous['image'])
+                return
+        if operation in ('upgrade-tag', 'fresh-tag'):
             print('Stage: resolve tag and build pinned candidate', flush=True)
             fleet.build('refs/tags/' + argument)
         release = json.loads((fleet.state / 'candidate.json').read_text())
@@ -92,7 +119,9 @@ def run(fleet, operation, argument, env_root=Path('/etc/oprail-observers')):
             raise ValueError('Build candidate does not match requested network and tag')
         image = pinned_image(release['image'])
         print('Stage: roll out one node at a time with sync gates', flush=True)
-        if operation == 'recover-tag':
+        if operation == 'fresh-tag':
+            fleet.replace_fresh(image)
+        elif operation == 'recover-tag':
             print('Explicit recovery: cold backup of each node before migration; first node must sync before continuing', flush=True)
             fleet.upgrade(image, recovery=True)
         else:
@@ -132,12 +161,16 @@ def run(fleet, operation, argument, env_root=Path('/etc/oprail-observers')):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--config', required=True)
+    p.add_argument('--expected-network', choices=['adiri', 'mainnet'])
     p.add_argument('--operation', required=True)
     p.add_argument('--argument', required=True)
     p.add_argument('--request-id', required=True)
     args = p.parse_args()
     request_id = str(uuid.UUID(args.request_id))
-    fleet = Fleet(json.loads(Path(args.config).read_text()), apply=True)
+    config = json.loads(Path(args.config).read_text())
+    if args.expected_network and config['network'] != args.expected_network:
+        raise ValueError('Controller profile does not match the requested network')
+    fleet = Fleet(config, apply=True)
     fleet.config_path = Path(args.config).resolve()
     with (fleet.state / 'operation.lock').open('w') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)

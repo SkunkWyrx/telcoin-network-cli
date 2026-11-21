@@ -79,6 +79,16 @@ export EXPECTED_CHAIN_ID="${EXPECTED_CHAIN_ID:-}" NETWORK_RPC_URL="${NETWORK_RPC
 
 FQDN="${VM_DNS_LABEL}.${LOCATION}.cloudapp.azure.com"
 CHAIN="${CHAIN:-adiri}"
+case "$CHAIN" in
+  adiri) NETWORK_FEATURES=adiri ;;
+  mainnet)
+    NETWORK_FEATURES=''
+    if [[ "${SKIP_IMAGE_BUILD:-false}" != true && "$GIT_TAG" == *adiri* ]]; then
+      echo 'Mainnet requires a mainnet release tag or an explicit commit with GIT_TAG empty.' >&2; exit 1
+    fi
+    ;;
+  *) echo 'CHAIN must be adiri or mainnet' >&2; exit 1 ;;
+esac
 EXECUTION_SNAPSHOT_ID="${EXECUTION_SNAPSHOT_ID:-}"
 CONSENSUS_SNAPSHOT_ID="${CONSENSUS_SNAPSHOT_ID:-}"
 if [[ -n "$EXECUTION_SNAPSHOT_ID" && -z "$CONSENSUS_SNAPSHOT_ID" || -z "$EXECUTION_SNAPSHOT_ID" && -n "$CONSENSUS_SNAPSHOT_ID" ]]; then
@@ -162,7 +172,7 @@ if [[ "${SKIP_IMAGE_BUILD:-false}" != true ]]; then
   cp src/docker/Dockerfile src/docker/entrypoint.sh "$WORK_DIR/build-context/src/docker/"
   azc acr build --registry "$ACR_NAME" --resource-group "$RG" --platform linux/amd64 \
     --image "${IMAGE_REPO}:${IMAGE_TAG}" --build-arg "GIT_TAG=${GIT_TAG}" \
-    --build-arg "GIT_BRANCH=${GIT_BRANCH}" --build-arg "GIT_REPO_URL=${GIT_REPO_URL}" \
+    --build-arg "NETWORK_FEATURES=${NETWORK_FEATURES}" --build-arg "GIT_BRANCH=${GIT_BRANCH}" --build-arg "GIT_REPO_URL=${GIT_REPO_URL}" \
     --file src/docker/Dockerfile "$WORK_DIR/build-context" --output none
 fi
 azc deployment group create -g "$RG" --name "${VM_NAME}-deploy" \
