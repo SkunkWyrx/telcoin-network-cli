@@ -4,8 +4,11 @@ umask 077
 dest=/etc/telcoin/rpc-tls
 lineage=${RENEWED_LINEAGE:?missing Certbot lineage}
 host=adiri-orbs.oprail.com
-[[ "$lineage" == /var/lib/oprail-acme/config/live/adiri-orbs.oprail.com ]]
-openssl x509 -in "$lineage/fullchain.pem" -noout -checkhost "$host" -checkend 86400
+[[ "$lineage" == /var/lib/oprail-acme/config/live/adiri-rpc-dual ]]
+openssl x509 -in "$lineage/fullchain.pem" -noout -checkend 86400
+for name in "$host" rpc-adiri.oprail.com; do
+  openssl verify -verify_hostname "$name" -untrusted "$lineage/fullchain.pem" "$lineage/fullchain.pem"
+done
 [[ "$(openssl x509 -in "$lineage/fullchain.pem" -pubkey -noout)" == "$(openssl pkey -in "$lineage/privkey.pem" -pubout)" ]]
 work=$(mktemp -d "$dest/.deploy.XXXXXX")
 rollback=false

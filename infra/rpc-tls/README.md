@@ -165,10 +165,12 @@ HTTP JSON-RPC listener.
 
 ### Automatic certificate renewal
 
-GoDaddy delegates only `_acme-challenge.adiri-orbs.oprail.com` to the Azure
-public DNS zone of the same name. The RPC A record stays at GoDaddy. Observer
-1's Azure managed identity has DNS Zone Contributor scoped only to that
-challenge zone. The Certbot hook creates a single apex TXT record, waits
+GoDaddy delegates `_acme-challenge.adiri-orbs.oprail.com` and
+`_acme-challenge.rpc-adiri.oprail.com` to their corresponding Azure public
+DNS zones. The RPC A records are managed at GoDaddy. Observer 1's Azure
+managed identity has DNS Zone Contributor scoped to the two challenge zones.
+The `adiri-rpc-dual` certificate covers both RPC hostnames. The Certbot hook
+creates a single apex TXT record in the selected zone, waits
 for all four Azure nameservers, and removes only its own record.
 
 The `oprail-rpc-renew.timer` checks twice daily on Observer 1. Certbot uses
@@ -202,3 +204,31 @@ checks, and was undrained. Both nodes matched Adiri at block 525290
 and the public endpoint passed again. No VM or disk was created or
 restored for this test. The verified candidate is recorded in
 `infra/pool/adiri-recovery.json`; promotion is a separate operation.
+
+### Public readiness and rate limits
+
+The public proxy probes `/public-readyz` on the local health service. A responsive
+node on the expected chain remains eligible when it falls behind or the reference
+RPC is unavailable. A maintenance drain, wrong chain, or local RPC failure returns
+HTTP 503. The private `/readyz` and rollout `/status` retain their strict sync
+checks. This public policy can keep multiple lagging observers eligible.
+
+Each proxy limits HTTP requests to 30 requests/second per client IP with a burst
+of 60, and 200 requests/second per backend with a burst of 400. Excess requests
+receive HTTP 429. These limits apply independently on each observer and count HTTP
+requests, including a JSON-RPC batch as one request.
+
+### Public endpoint alerts
+
+`scripts/pool/rpc_monitor.py` runs on the operations runner using
+`infra/pool/adiri-rpc-monitor.service` and its one-minute timer. Install the script
+and `health.py` under `/usr/local/lib/oprail-rpc-monitor/`. The runner identity
+requires permission to publish Azure Monitor custom metrics. The alert template
+`infra/pool/adiri-rpc-alerts.bicep` references the existing `adiri-rpc-alerts` action
+group and runner VM.
+
+Three consecutive samples of a public RPC failure or lag of at least five blocks
+publish an incident metric. Stateful Azure Monitor alerts notify on activation
+and resolution. A reference failure omits the lag metric. Alert evaluation runs
+every minute over a five-minute window, so delivery and recovery include Azure
+Monitor processing time. The timer does not send an email on every sample.

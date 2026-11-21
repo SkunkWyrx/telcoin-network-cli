@@ -3,6 +3,9 @@ error_log /dev/stderr warn;
 events {}
 http {
   access_log off;
+  limit_req_zone $binary_remote_addr zone=rpc_client:10m rate=30r/s;
+  limit_req_zone $server_addr zone=rpc_backend:1m rate=200r/s;
+  limit_req_status 429;
   server {
     listen @FRONTEND_IP@:443 ssl;
     server_name @HOSTNAME@;
@@ -12,6 +15,8 @@ http {
     client_max_body_size 1m;
     location = / {
       limit_except POST { deny all; }
+      limit_req zone=rpc_client burst=60 nodelay;
+      limit_req zone=rpc_backend burst=400 nodelay;
       proxy_pass http://127.0.0.1:8545;
       proxy_connect_timeout 3s;
       proxy_read_timeout 60s;
@@ -22,7 +27,7 @@ http {
   server {
     listen @BACKEND_IP@:19091;
     location = /readyz {
-      proxy_pass http://127.0.0.1:9090/readyz;
+      proxy_pass http://127.0.0.1:9090/public-readyz;
       proxy_connect_timeout 2s;
       proxy_read_timeout 3s;
     }

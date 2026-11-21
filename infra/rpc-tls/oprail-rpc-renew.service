@@ -6,5 +6,5 @@ After=network-online.target telcoin-rpc-tls.service
 [Service]
 Type=oneshot
 UMask=0077
-ExecStart=/usr/bin/certbot renew --non-interactive --cert-name adiri-orbs.oprail.com --config-dir /var/lib/oprail-acme/config --work-dir /var/lib/oprail-acme/work --logs-dir /var/lib/oprail-acme/logs
+ExecStart=/usr/bin/certbot renew --non-interactive --cert-name adiri-rpc-dual --deploy-hook /etc/telcoin/acme/acme-deploy-dual.sh --config-dir /var/lib/oprail-acme/config --work-dir /var/lib/oprail-acme/work --logs-dir /var/lib/oprail-acme/logs
 TimeoutStartSec=15min
