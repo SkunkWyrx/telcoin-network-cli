@@ -401,7 +401,8 @@ sync
             raise ValueError('No public RPC configuration for this pool')
         if node['name'] == config['issuer']:
             raise ValueError('Refusing to reconfigure the certificate issuer as a follower')
-        if not re.fullmatch(r'[a-z0-9.-]+', config['hostname']):
+        hostnames = [config['hostname'], *config.get('aliases', [])]
+        if any(not re.fullmatch(r'[a-z0-9.-]+', name) for name in hostnames):
             raise ValueError('Invalid public hostname')
         print('Set up public HTTPS after private sync:', node['name'])
         if not self.apply:
@@ -435,7 +436,7 @@ sync
                 '--scope', vault['id'] + '/secrets/' + config['secret'])
         files = ROOT / 'infra/rpc-tls'
         replacements = {'@FRONTEND_IP@': frontend, '@BACKEND_IP@': backend,
-                        '@HOSTNAME@': config['hostname'], '@IMAGE@': image}
+                        '@HOSTNAME@': ' '.join(hostnames), '@IMAGE@': image}
         commands = ['install -d -m 0700 /etc/telcoin/rpc-tls']
         for source, destination in (
             ('nginx-public.conf.in', '/etc/telcoin/rpc-tls/nginx.conf'),

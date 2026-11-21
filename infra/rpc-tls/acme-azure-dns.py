@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Certbot DNS-01 hook limited to the Adiri public RPC challenge zone."""
+"""Certbot DNS-01 hook limited to the Adiri public RPC challenge zones."""
 import json
 import os
 import re
@@ -9,14 +9,11 @@ import time
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-HOST = "adiri-orbs.oprail.com"
-ZONE = "_acme-challenge." + HOST
+DNS_SUFFIXES = {
+    "adiri-orbs.oprail.com": "08",
+    "rpc-adiri.oprail.com": "05",
+}
 BASE = "https://management.azure.com"
-RECORD = (BASE + "/subscriptions/8a149d4d-c52a-4432-929e-de754584e269"
-          "/resourceGroups/oprail-observer-adiri/providers/Microsoft.Network"
-          f"/dnsZones/{ZONE}/TXT/@?api-version=2018-05-01")
-SERVERS = ("ns1-08.azure-dns.com", "ns2-08.azure-dns.net",
-           "ns3-08.azure-dns.org", "ns4-08.azure-dns.info")
 
 
 def identity_token():
@@ -26,20 +23,20 @@ def identity_token():
         return json.load(response)["access_token"]
 
 
-def request(token, method, body=None, **headers):
+def request(record, token, method, body=None, **headers):
     headers.update({"Authorization": "Bearer " + token, "Content-Type": "application/json"})
     data = json.dumps(body).encode() if body is not None else None
-    with urlopen(Request(RECORD, data=data, headers=headers, method=method), timeout=20) as response:
+    with urlopen(Request(record, data=data, headers=headers, method=method), timeout=20) as response:
         content = response.read()
         return json.loads(content) if content else None
 
 
-def cleanup(token, value):
+def cleanup(record, token, value):
     try:
-        current = request(token, "GET")
+        current = request(record, token, "GET")
         if current["properties"]["TXTRecords"] != [{"value": [value]}]:
             raise RuntimeError("Refusing to remove a TXT record with different contents")
-        request(token, "DELETE", **{"If-Match": current["etag"]})
+        request(record, token, "DELETE", **{"If-Match": current["etag"]})
     except HTTPError as exc:
         if exc.code != 404:
             raise
@@ -49,27 +46,34 @@ def main():
     mode = sys.argv[1]
     host = os.getenv("CERTBOT_IDENTIFIER") or os.getenv("CERTBOT_DOMAIN")
     value = os.environ["CERTBOT_VALIDATION"]
-    if host != HOST or not re.fullmatch(r"[A-Za-z0-9_-]{43}", value):
+    if host not in DNS_SUFFIXES or not re.fullmatch(r"[A-Za-z0-9_-]{43}", value):
         raise ValueError("Unexpected Certbot challenge identifier or value")
+    zone = "_acme-challenge." + host
+    suffix = DNS_SUFFIXES[host]
+    servers = tuple(f"ns{i}-{suffix}.azure-dns.{tld}"
+                    for i, tld in enumerate(("com", "net", "org", "info"), 1))
+    record = (BASE + "/subscriptions/8a149d4d-c52a-4432-929e-de754584e269"
+              "/resourceGroups/oprail-observer-adiri/providers/Microsoft.Network"
+              f"/dnsZones/{zone}/TXT/@?api-version=2018-05-01")
     token = identity_token()
     if mode == "cleanup":
-        cleanup(token, value)
+        cleanup(record, token, value)
     elif mode == "auth":
         payload = {"properties": {"TTL": 60, "TXTRecords": [{"value": [value]}]}}
-        request(token, "PUT", payload, **{"If-None-Match": "*"})
+        request(record, token, "PUT", payload, **{"If-None-Match": "*"})
         try:
             deadline = time.monotonic() + 180
             while time.monotonic() < deadline:
                 if all('"' + value + '"' in subprocess.run(
-                    ["dig", "+time=3", "+tries=1", "+short", "@" + ns, ZONE, "TXT"],
+                    ["dig", "+time=3", "+tries=1", "+short", "@" + ns, zone, "TXT"],
                     capture_output=True, text=True, timeout=5, check=False,
-                ).stdout.splitlines() for ns in SERVERS):
+                ).stdout.splitlines() for ns in servers):
                     time.sleep(15)
                     return
                 time.sleep(5)
             raise RuntimeError("Challenge did not reach all Azure nameservers")
         except Exception:
-            cleanup(token, value)
+            cleanup(record, token, value)
             raise
     else:
         raise ValueError("Expected auth or cleanup")

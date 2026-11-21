@@ -47,6 +47,22 @@ def effective(status, sampled_at, now, ttl, drained=False):
     return dict(status)
 
 
+def public_status(config):
+    if Path('/run/telcoin/draining').exists():
+        return {'ready': False, 'reason': 'maintenance'}
+    try:
+        local = config.get('local_rpc', 'http://127.0.0.1:8545')
+        expected_chain = int(str(config['chain_id']), 0)
+        if int(rpc(local, 'eth_chainId'), 16) != expected_chain:
+            return {'ready': False, 'reason': 'chain-id-mismatch'}
+        height = int(rpc(local, 'eth_blockNumber'), 16)
+        if Path('/run/telcoin/draining').exists():
+            return {'ready': False, 'reason': 'maintenance'}
+        return {'ready': True, 'height': height}
+    except Exception as error:
+        return {'ready': False, 'reason': 'rpc-unavailable', 'errorType': type(error).__name__}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', required=True)
@@ -78,14 +94,16 @@ def main():
     threading.Thread(target=collect, daemon=True).start()
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
-            if self.path not in ('/readyz', '/status'):
+            if self.path not in ('/readyz', '/status', '/public-readyz'):
                 self.send_error(404)
                 return
-            with lock:
-                # /status is raw sync readiness for the local upgrade controller; it
-                # deliberately ignores the maintenance flag, never the sample TTL.
-                body = effective(cache['status'], cache['time'], time.monotonic(), ttl,
-                                 self.path == '/readyz' and Path('/run/telcoin/draining').exists())
+            if self.path == '/public-readyz':
+                body = public_status(config)
+            else:
+                with lock:
+                    # /status reports sync to the upgrade controller independently of maintenance.
+                    body = effective(cache['status'], cache['time'], time.monotonic(), ttl,
+                                     self.path == '/readyz' and Path('/run/telcoin/draining').exists())
             payload = json.dumps(body).encode()
             self.send_response(200 if body['ready'] else 503)
             self.send_header('Content-Type', 'application/json')

@@ -1,0 +1,11 @@
+[Unit]
+Description=Sample public Adiri RPC and publish Azure Monitor metrics
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+DynamicUser=true
+StateDirectory=oprail-rpc-monitor
+ExecStart=/usr/bin/python3 -B /usr/local/lib/oprail-rpc-monitor/rpc_monitor.py
+TimeoutStartSec=55

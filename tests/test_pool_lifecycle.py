@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 
 POOL = Path(__file__).resolve().parents[1] / 'scripts/pool'
 sys.path.insert(0, str(POOL))
-from health import effective, evaluate
+from health import effective, evaluate, public_status
 from policy import complete_pairs, pinned_image, retention, upgrade_order
 from fleet import Fleet
 
@@ -51,6 +51,42 @@ class HealthTests(unittest.TestCase):
         self.assertFalse(effective(good, 1, 50, 30)['ready'])
         self.assertFalse(effective(good, 49, 50, 30, drained=True)['ready'])
         self.assertTrue(effective(good, 49, 50, 30)['ready'])
+
+
+class PublicReadinessTests(unittest.TestCase):
+    config = {'local_rpc': 'local', 'reference_rpc': 'reference', 'chain_id': '0x7e1'}
+
+    @patch('health.Path.exists', return_value=False)
+    def test_lagging_node_can_serve_while_sync_gate_rejects_it(self, exists):
+        def query(url, method, params=None):
+            if method == 'eth_chainId':
+                return '0x7e1'
+            return hex(100 if url == 'local' else 120)
+        self.assertFalse(evaluate('local', 'reference', '0x7e1', query=query)['ready'])
+        with patch('health.rpc', side_effect=query):
+            self.assertTrue(public_status(self.config)['ready'])
+
+    @patch('health.Path.exists', return_value=False)
+    def test_reference_outage_does_not_remove_responsive_node(self, exists):
+        def query(url, method, params=None):
+            if url == 'reference':
+                raise TimeoutError()
+            return '0x7e1' if method == 'eth_chainId' else '0x64'
+        with patch('health.rpc', side_effect=query):
+            self.assertTrue(public_status(self.config)['ready'])
+
+    @patch('health.Path.exists', return_value=False)
+    def test_wrong_chain_and_unavailable_rpc_are_unhealthy(self, exists):
+        with patch('health.rpc', return_value='0x1'):
+            self.assertEqual(public_status(self.config)['reason'], 'chain-id-mismatch')
+        with patch('health.rpc', side_effect=TimeoutError()):
+            self.assertEqual(public_status(self.config)['reason'], 'rpc-unavailable')
+
+    def test_drain_before_or_during_check_blocks_traffic(self):
+        for states in ([True], [False, True]):
+            with self.subTest(states=states), patch('health.Path.exists', side_effect=states), patch(
+                    'health.rpc', side_effect=['0x7e1', '0x64']):
+                self.assertEqual(public_status(self.config)['reason'], 'maintenance')
 
 
 class PublicRpcTests(unittest.TestCase):

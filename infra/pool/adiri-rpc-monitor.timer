@@ -1,0 +1,9 @@
+[Unit]
+Description=Sample public Adiri RPC once per minute
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target
