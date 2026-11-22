@@ -50,7 +50,7 @@ class ValidatorProfileTests(unittest.TestCase):
         self.assertEqual(output['storage']['execution']['size_gb'], 1024)
         self.assertEqual(output['storage']['consensus']['size_gb'], 256)
         self.assertEqual(output['node_names'], ['mainnet-validator-1'])
-        self.assertEqual(self.load('mainnet')['storage']['execution']['size_gb'], 256)
+        self.assertEqual(self.load('mainnet')['storage']['execution']['size_gb'], 100)
 
     def test_capacity_cannot_be_reduced_below_configured_iops_support(self):
         p = self.load('mainnet')

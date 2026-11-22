@@ -57,14 +57,14 @@
     "type": "PremiumV2_LRS",
     "execution": {
       "lun": 0,
-      "size_gb": 256,
+      "size_gb": 100,
       "iops": 12000,
       "throughput_mbps": 240,
       "mount": "/var/lib/telcoin/db"
     },
     "consensus": {
       "lun": 1,
-      "size_gb": 128,
+      "size_gb": 100,
       "iops": 3000,
       "throughput_mbps": 125,
       "mount": "/mnt/telcoin-consensus"

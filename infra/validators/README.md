@@ -26,8 +26,8 @@ release.
 | Setting | Adiri | Mainnet |
 | --- | --- | --- |
 | VM | Standard_D8s_v6 | Standard_D16s_v6 |
-| Execution disk | 256 GiB, 12,000 IOPS, 240 MB/s | 256 GiB, 20,000 IOPS, 300 MB/s |
-| Consensus disk | 128 GiB, 3,000 IOPS, 125 MB/s | 128 GiB, 3,000 IOPS, 125 MB/s |
+| Execution disk | 100 GiB, 12,000 IOPS, 240 MB/s | 100 GiB, 20,000 IOPS, 300 MB/s |
+| Consensus disk | 100 GiB, 3,000 IOPS, 125 MB/s | 100 GiB, 3,000 IOPS, 125 MB/s |
 
 Both use Premium SSD v2. Disk capacities and performance are independent profile
 settings. Small initial disks are intentional. Preview another capacity with:
