@@ -4,7 +4,7 @@ on:
     inputs:
       network:
         type: choice
-        options: [adiri]
+        options: [adiri, mainnet]
         default: adiri
       operation:
         type: choice
@@ -21,8 +21,8 @@ jobs:
   maintenance:
     # No hosted runner has a route to private RPC. Provision this dedicated, trusted
     # runner explicitly; do not run this workflow on pull_request or untrusted code.
-    if: vars.OBSERVER_AUTOMATION_ENABLED == 'true'
-    runs-on: [self-hosted, observer-operations]
+    if: vars.OBSERVER_AUTOMATION_ENABLED == 'true' && (inputs.network != 'mainnet' || vars.OBSERVER_MAINNET_ENABLED == 'true')
+    runs-on: [self-hosted, "${{ inputs.network == 'mainnet' && 'observer-operations-mainnet' || 'observer-operations' }}"]
     env:
       OBSERVER_STATE_DIR: /var/lib/oprail-observers
       OBSERVER_NETWORK: ${{ inputs.network || 'adiri' }}
@@ -35,7 +35,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          case "$OBSERVER_NETWORK" in adiri) ;; *) exit 1 ;; esac
+          case "$OBSERVER_NETWORK" in adiri|mainnet) ;; *) exit 1 ;; esac
           case "$OBSERVER_OPERATION" in
             plan) python3 scripts/pool/fleet.py --config "/etc/oprail-observers/$OBSERVER_NETWORK/pool.json" plan ;;
             snapshot-tick) python3 scripts/pool/snapshot_tick.py --config "/etc/oprail-observers/$OBSERVER_NETWORK/pool.json" ;;
