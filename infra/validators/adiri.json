@@ -1,0 +1,97 @@
+{
+  "role": "validator",
+  "network": "adiri",
+  "subscription": "8a149d4d-c52a-4432-929e-de754584e269",
+  "resource_group": "oprail-validator-adiri",
+  "location": "centralus",
+  "initial_node_count": 1,
+  "node_name_prefix": "adiri-validator-",
+  "vm": {
+    "size": "Standard_D8s_v6",
+    "zone": "1",
+    "os": "Ubuntu 24.04 LTS",
+    "architecture": "x86_64",
+    "security_type": "TrustedLaunch",
+    "vtpm_enabled": true,
+    "secure_boot_enabled": true
+  },
+  "release": {
+    "scripts_network": "testnet",
+    "chain": "adiri",
+    "chain_id": "0x7e1",
+    "features": "adiri",
+    "image_repository": "ghcr.io/telcoin-association/tn-testnet",
+    "tag": "",
+    "pin_signed_release_digest": true
+  },
+  "reference_rpc": "https://rpc.adiri.tel",
+  "networking": {
+    "vnet_name": "oprail-validator-adiri-vnet",
+    "address_prefix": "10.56.0.0/16",
+    "node_subnet": {
+      "name": "validators",
+      "prefix": "10.56.0.0/24"
+    },
+    "management_subnet": {
+      "name": "management",
+      "prefix": "10.56.1.0/27"
+    },
+    "public_p2p": true,
+    "p2p_udp_ports": [
+      49590,
+      49594
+    ],
+    "public_rpc": false,
+    "rpc_bind_address": "127.0.0.1",
+    "http_rpc_port": 8545,
+    "ws_rpc_port": 8546,
+    "metrics_bind_address": "127.0.0.1",
+    "public_tcp_ports": [],
+    "management_access": "AzureRunCommand",
+    "ssh_source_cidrs": [],
+    "advertised_transaction_rpc_url": ""
+  },
+  "storage": {
+    "datadir": "/var/lib/telcoin",
+    "filesystem": "ext4",
+    "type": "PremiumV2_LRS",
+    "execution": {
+      "lun": 0,
+      "size_gb": 256,
+      "iops": 12000,
+      "throughput_mbps": 240,
+      "mount": "/var/lib/telcoin/db"
+    },
+    "consensus": {
+      "lun": 1,
+      "size_gb": 128,
+      "iops": 3000,
+      "throughput_mbps": 125,
+      "mount": "/mnt/telcoin-consensus"
+    },
+    "bind_mounts": {
+      "/var/lib/telcoin/consensus-db": "/mnt/telcoin-consensus/consensus-db",
+      "/var/lib/telcoin/static_files": "/mnt/telcoin-consensus/static_files"
+    },
+    "required_mounts": [
+      "/var/lib/telcoin/db",
+      "/var/lib/telcoin/consensus-db",
+      "/var/lib/telcoin/static_files"
+    ],
+    "delete_with_vm": false
+  },
+  "identity": {
+    "execution_address": "",
+    "preserve_registered_keys": true,
+    "credential_storage": "systemd-host+tpm2"
+  },
+  "operations": {
+    "runner_label": "validator-operations-adiri",
+    "approval_environment": "validator-operations-adiri",
+    "automatic_staking": false,
+    "automatic_activation": false,
+    "preserve_consensus_signing_state": true,
+    "quorum_check_before_restart": true,
+    "epoch_aware_restart": true
+  }
+}
