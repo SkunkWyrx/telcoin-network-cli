@@ -10,7 +10,7 @@ from pathlib import Path
 import re
 import uuid
 from datetime import datetime, timezone
-from fleet import Fleet
+from fleet import Fleet, ROOT
 from policy import pinned_image
 
 
@@ -21,6 +21,7 @@ def validate(operation, argument):
                 'fresh-tag': r'v[0-9]+\.[0-9]+\.[0-9]+(?:[.-][A-Za-z0-9._-]+)?',
                 'upgrade-tag': r'v[0-9]+\.[0-9]+\.[0-9]+(?:[.-][A-Za-z0-9._-]+)?',
                 'recover-tag': r'v[0-9]+\.[0-9]+\.[0-9]+(?:[.-][A-Za-z0-9._-]+)?',
+                'replace': r'[a-z0-9./-]+@sha256:[a-f0-9]{64}',
                 'upgrade': r'[a-z0-9./-]+@sha256:[a-f0-9]{64}'}
     if operation not in patterns or len(argument) > 300 or not re.fullmatch(patterns[operation], argument):
         raise ValueError('Invalid management operation')
@@ -62,15 +63,18 @@ def run(fleet, operation, argument, env_root=Path('/etc/oprail-observers')):
     if operation == 'build':
         fleet.build(argument)
         return
-    pending_replacement = fleet.state / 'replacement.json' if operation == 'fresh-tag' else None
+    pending_replacement = fleet.state / 'replacement.json' if operation in ('fresh-tag', 'replace') else None
     if pending_replacement and pending_replacement.exists():
         replacement = json.loads(pending_replacement.read_text())
         retiring = [s for s in replacement['steps'] if s['stage'] == 'retiring']
         # Only finish the exact persisted cleanup before checking live membership.
         for step in retiring:
-            candidate = json.loads((fleet.state / 'candidate.json').read_text())
-            if (candidate.get('network') != fleet.c['network'] or
-                    candidate.get('ref') != 'refs/tags/' + argument or candidate['image'] != replacement['image']):
+            release_file = 'candidate.json' if operation == 'fresh-tag' else 'latest-release.json'
+            candidate = json.loads((fleet.state / release_file).read_text())
+            matches = (candidate.get('ref') == 'refs/tags/' + argument if operation == 'fresh-tag'
+                       else candidate.get('validated') and candidate['image'] == argument)
+            if (candidate.get('network') != fleet.c['network'] or not matches or
+                    candidate['image'] != replacement['image']):
                 raise ValueError('Resume the active replacement with its original tag')
             new = next(n for n in fleet.c['nodes'] if n['name'] == step['name'])
             fleet.wait_synced(new)
@@ -128,12 +132,15 @@ def run(fleet, operation, argument, env_root=Path('/etc/oprail-observers')):
             fleet.upgrade(image)
         print('Stage: promote only after all nodes pass rollout', flush=True)
         fleet.promote(image)
-    elif operation == 'upgrade':
+    elif operation in ('upgrade', 'replace'):
         image = pinned_image(argument)
         release = json.loads((fleet.state / 'latest-release.json').read_text())
         if release.get('network') != fleet.c['network'] or not release.get('validated') or release['image'] != image:
             raise ValueError('Only the validated promoted release for this network may be deployed')
-        fleet.upgrade(image)
+        if operation == 'replace':
+            fleet.replace_fresh(image)
+        else:
+            fleet.upgrade(image)
     elif operation == 'add':
         # Slot files are operator-provisioned secrets, never browser-supplied paths.
         path = env_root / fleet.c['network'] / f'node-{argument}.env'
@@ -168,6 +175,9 @@ def main():
     args = p.parse_args()
     request_id = str(uuid.UUID(args.request_id))
     config = json.loads(Path(args.config).read_text())
+    defaults = ROOT / 'infra/pool' / (config['network'] + '.json')
+    if 'storage' not in config and defaults.is_file():
+        config['storage'] = json.loads(defaults.read_text()).get('storage', {})
     if args.expected_network and config['network'] != args.expected_network:
         raise ValueError('Controller profile does not match the requested network')
     fleet = Fleet(config, apply=True)

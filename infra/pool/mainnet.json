@@ -38,5 +38,12 @@
   "api_subnet_cidr": "10.53.0.0/23",
   "node_name_prefix": "mainnet-observer-",
   "dns_label_prefix": "oprail-mainnet-observer-",
-  "node_template": "/etc/oprail-observers/mainnet/template.env"
+  "node_template": "/etc/oprail-observers/mainnet/template.env",
+  "storage": {
+    "execution_size_gb": 50,
+    "consensus_size_gb": 50,
+    "auto_grow": true,
+    "threshold_percent": 75,
+    "increment_gb": 50
+  }
 }

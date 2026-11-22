@@ -123,3 +123,47 @@ selects `/etc/oprail-observers/mainnet/pool.json` and uses a separate network
 concurrency group. The management website needs its own mainnet settings and
 release environment before it can dispatch mainnet requests. Existing Adiri
 website settings continue selecting Adiri.
+
+## Small observer disks and automatic growth
+
+New pool observers start with 50 GiB execution and 50 GiB consensus disks. The
+`storage` section in each network profile sets the initial capacities and enables
+growth at 75% usage by 50 GiB per event. A systemd timer checks both physical data
+filesystems independently every five minutes. Bind mounts on the consensus disk
+are counted once. Capacity changes retain the configured IOPS and throughput.
+
+The VM's managed identity receives disk read/write permissions scoped to its two
+data disks. A disk must be attached to that VM, use Premium SSD v2, be mounted as
+the expected whole-disk ext4 device and have no incomplete background copy before
+the service attempts an expansion. Growth uses Azure ARM, rescans the device and
+runs `resize2fs` online. The service records completed expansions and retries an
+interrupted filesystem expansion on its next run. Azure's 64 TiB disk limit is the
+default ceiling. Failures and completed actions appear in the system journal:
+
+```bash
+sudo systemctl status telcoin-disk-growth.timer
+sudo journalctl -u telcoin-disk-growth.service
+```
+
+The timer is enabled at creation on new pool VMs. Existing VMs retain their disks
+until explicitly replaced. Snapshot restores must use disks at least as large as
+the snapshot, so the fleet automatically raises the initial capacity to match a
+larger source snapshot. A move from existing 512 GiB disks to 50 GiB therefore
+uses the fresh-disk replacement path and syncs from the network.
+
+The `replace` workflow operation accepts the network's promoted image digest. It
+uses the current validated release, provisions a fresh replacement, waits for
+sync and public HTTPS setup, transfers certificate renewal if needed, then
+retires the old observer. It preserves the original node count and shares the
+same serialized operation lock as upgrades. This is the storage migration path
+when the node software version remains the same.
+
+Existing runner profiles without a `storage` section inherit the repository's
+network-specific storage defaults. An explicit runtime `storage` section takes
+precedence. Before the first growth-enabled deployment, an operator applies
+`infra/pool/disk-growth-access.bicep` with the runner's principal ID. That creates
+the custom disk role and delegates only that role to the runner. The VM template
+then assigns it at each new data disk scope. Optional `challengeZones` and
+`certificateVault` inputs delegate only the DNS contributor and certificate
+publisher roles at the dedicated certificate resources for issuer replacement.
+The operations runner cannot redefine the custom disk role.

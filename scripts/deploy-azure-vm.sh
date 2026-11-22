@@ -25,7 +25,7 @@ load_env_file() {
   local file="$1" name i
   local saved_names=() saved_values=()
   for name in AZURE_SUBSCRIPTION_ID AZURE_RESOURCE_GROUP AZURE_LOCATION ACR_NAME \
-      VM_NAME VM_SIZE VM_ZONE DATA_DISK_IOPS DATA_DISK_MBPS VM_ADMIN_USERNAME VM_DNS_LABEL SSH_SOURCE_CIDR \
+      VM_NAME VM_SIZE VM_ZONE EXECUTION_DISK_SIZE_GB CONSENSUS_DISK_SIZE_GB DISK_AUTO_GROW_ENABLED DISK_GROW_THRESHOLD_PERCENT DISK_GROW_INCREMENT_GB DATA_DISK_IOPS DATA_DISK_MBPS VM_ADMIN_USERNAME VM_DNS_LABEL SSH_SOURCE_CIDR \
       SSH_PUBLIC_KEY_FILE SSH_PRIVATE_KEY_FILE TN_BLS_PASSPHRASE GIT_TAG GIT_BRANCH \
       GIT_REPO_URL IMAGE_REPO IMAGE_TAG IMAGE_DIGEST ACR_RESOURCE_GROUP EXISTING_SUBNET_ID BACKEND_POOL_ID PRIVATE_RPC_SOURCE_CIDRS EXPECTED_CHAIN_ID NETWORK_RPC_URL SKIP_IMAGE_BUILD CHAIN HTTP_API WS_ENABLED WS_API PUBLIC_RPC_URL PUBLIC_RPC_ENABLED PUBLIC_RPC_SOURCE_CIDR PREVIEW_DIR EXECUTION_SNAPSHOT_ID CONSENSUS_SNAPSHOT_ID; do
     if declare -p "$name" >/dev/null 2>&1; then
@@ -52,6 +52,9 @@ LOCATION="${AZURE_LOCATION:-eastus}"
 VM_NAME="${VM_NAME:-telcoin-observer-vm-1}"
 VM_SIZE="${VM_SIZE:-Standard_D4s_v6}"
 VM_ZONE="${VM_ZONE:-1}"
+export EXECUTION_DISK_SIZE_GB="${EXECUTION_DISK_SIZE_GB:-512}" CONSENSUS_DISK_SIZE_GB="${CONSENSUS_DISK_SIZE_GB:-512}"
+export DISK_AUTO_GROW_ENABLED="${DISK_AUTO_GROW_ENABLED:-false}"
+export DISK_GROW_THRESHOLD_PERCENT="${DISK_GROW_THRESHOLD_PERCENT:-75}" DISK_GROW_INCREMENT_GB="${DISK_GROW_INCREMENT_GB:-50}"
 DATA_DISK_IOPS="${DATA_DISK_IOPS:-5000}"
 DATA_DISK_MBPS="${DATA_DISK_MBPS:-125}"
 ADMIN="${VM_ADMIN_USERNAME:-azureuser}"
@@ -100,7 +103,7 @@ export WS_API="${WS_API:-$HTTP_API}"
 [[ "$WS_ENABLED" == true || "$WS_ENABLED" == false ]] || { echo "WS_ENABLED must be true or false" >&2; exit 1; }
 export PUBLIC_RPC_URL="${PUBLIC_RPC_URL:-}"
 export EXECUTION_SNAPSHOT_ID CONSENSUS_SNAPSHOT_ID
-export RG LOCATION VM_NAME VM_SIZE VM_ZONE DATA_DISK_IOPS DATA_DISK_MBPS ADMIN ACR_NAME VM_DNS_LABEL SSH_SOURCE_CIDR SSH_PUBLIC_KEY_FILE CHAIN FQDN
+export RG LOCATION VM_NAME VM_SIZE VM_ZONE EXECUTION_DISK_SIZE_GB CONSENSUS_DISK_SIZE_GB DISK_AUTO_GROW_ENABLED DISK_GROW_THRESHOLD_PERCENT DISK_GROW_INCREMENT_GB DATA_DISK_IOPS DATA_DISK_MBPS ADMIN ACR_NAME VM_DNS_LABEL SSH_SOURCE_CIDR SSH_PUBLIC_KEY_FILE CHAIN FQDN
 umask 077
 if [[ "$MODE" == --preview ]]; then
   : "${PREVIEW_DIR:?Set PREVIEW_DIR for rendered files}"
@@ -123,14 +126,19 @@ ipaddress.ip_network(get('SSH_SOURCE_CIDR'), strict=False)
 for key, pattern in [('VM_NAME',r'[a-zA-Z][a-zA-Z0-9-]{0,63}'), ('ADMIN',r'[a-z_][a-z0-9_-]*'), ('ACR_NAME',r'[a-zA-Z0-9]{5,50}'), ('VM_DNS_LABEL',r'[a-z][a-z0-9-]{1,61}[a-z0-9]')]:
     if not re.fullmatch(pattern,get(key)): raise SystemExit('Invalid '+key)
 if get('VM_ZONE') not in ('1','2','3'): raise SystemExit('Invalid VM_ZONE')
+sizes = [int(get('EXECUTION_DISK_SIZE_GB')), int(get('CONSENSUS_DISK_SIZE_GB'))]
+if any(not 6 <= size <= 65536 for size in sizes): raise SystemExit('Invalid data disk capacity')
+if get('DISK_AUTO_GROW_ENABLED') not in ('true', 'false'): raise SystemExit('Invalid disk growth setting')
+if not 0 < int(get('DISK_GROW_THRESHOLD_PERCENT')) < 100 or int(get('DISK_GROW_INCREMENT_GB')) < 1:
+    raise SystemExit('Invalid disk growth policy')
 iops, mbps = int(get('DATA_DISK_IOPS')), int(get('DATA_DISK_MBPS'))
-if not (3000 <= iops <= 80000 and 125 <= mbps <= min(1200, iops // 4)):
+if not (3000 <= iops <= min(80000, min(sizes) * 500) and 125 <= mbps <= min(1200, iops // 4)):
     raise SystemExit('Invalid Premium SSD v2 IOPS/throughput settings')
 if get('PUBLIC_RPC_ENABLED') not in ('true', 'false'): raise SystemExit('PUBLIC_RPC_ENABLED must be true or false')
 if get('PUBLIC_RPC_SOURCE_CIDR') != '*': ipaddress.ip_network(get('PUBLIC_RPC_SOURCE_CIDR'), strict=False)
 private_cidrs=[v.strip() for v in get('PRIVATE_RPC_SOURCE_CIDRS').split(',') if v.strip()]
 for cidr in private_cidrs: ipaddress.ip_network(cidr, strict=False)
-values = {'existingSubnetId':get('EXISTING_SUBNET_ID'), 'backendPoolId':get('BACKEND_POOL_ID'), 'privateRpcSourceCidrs':private_cidrs, 'acrResourceGroup':get('ACR_RESOURCE_GROUP'), 'roleAssignmentSeed':str(uuid.uuid4()), 'publicRpcEnabled':get('PUBLIC_RPC_ENABLED') == 'true', 'publicRpcSourceCidr':get('PUBLIC_RPC_SOURCE_CIDR'), 'observerChain':get('CHAIN'), 'publicRpcUrl':get('PUBLIC_RPC_URL'), 'executionSnapshotId':get('EXECUTION_SNAPSHOT_ID'), 'consensusSnapshotId':get('CONSENSUS_SNAPSHOT_ID'), 'availabilityZone':get('VM_ZONE'), 'dataDiskIops':iops, 'dataDiskMbps':mbps, 'location':get('LOCATION'),'vmName':get('VM_NAME'),'vmSize':get('VM_SIZE'),
+values = {'executionDiskSizeGB':sizes[0], 'consensusDiskSizeGB':sizes[1], 'diskAutoGrowEnabled':get('DISK_AUTO_GROW_ENABLED') == 'true', 'existingSubnetId':get('EXISTING_SUBNET_ID'), 'backendPoolId':get('BACKEND_POOL_ID'), 'privateRpcSourceCidrs':private_cidrs, 'acrResourceGroup':get('ACR_RESOURCE_GROUP'), 'roleAssignmentSeed':str(uuid.uuid4()), 'publicRpcEnabled':get('PUBLIC_RPC_ENABLED') == 'true', 'publicRpcSourceCidr':get('PUBLIC_RPC_SOURCE_CIDR'), 'observerChain':get('CHAIN'), 'publicRpcUrl':get('PUBLIC_RPC_URL'), 'executionSnapshotId':get('EXECUTION_SNAPSHOT_ID'), 'consensusSnapshotId':get('CONSENSUS_SNAPSHOT_ID'), 'availabilityZone':get('VM_ZONE'), 'dataDiskIops':iops, 'dataDiskMbps':mbps, 'location':get('LOCATION'),'vmName':get('VM_NAME'),'vmSize':get('VM_SIZE'),
  'adminUsername':get('ADMIN'),'sshSourceCidr':get('SSH_SOURCE_CIDR'),
  'dnsLabel':get('VM_DNS_LABEL'),'acrName':get('ACR_NAME'),
  'sshPublicKey':Path(get('SSH_PUBLIC_KEY_FILE')).read_text().strip(),
@@ -154,15 +162,17 @@ EXISTING_DISKS=$(azc disk list -g "$RG" --query "[?name=='${VM_NAME}-execution' 
 if [[ -n "$EXECUTION_SNAPSHOT_ID" ]]; then
   for snapshot in "$EXECUTION_SNAPSHOT_ID" "$CONSENSUS_SNAPSHOT_ID"; do
     azc snapshot show --ids "$snapshot" -o json > "$WORK_DIR/snapshot.json"
-    python3 - "$WORK_DIR/snapshot.json" "$LOCATION" <<'CHECK'
+    capacity="$CONSENSUS_DISK_SIZE_GB"
+    [[ "$snapshot" != "$EXECUTION_SNAPSHOT_ID" ]] || capacity="$EXECUTION_DISK_SIZE_GB"
+    python3 - "$WORK_DIR/snapshot.json" "$LOCATION" "$capacity" <<'CHECK'
 import json, sys
 s = json.load(open(sys.argv[1]))
 if s['location'].lower() != sys.argv[2].lower():
     raise SystemExit('Snapshot must be copied to the deployment region first')
 if s.get('provisioningState') != 'Succeeded' or s.get('completionPercent', 0) != 100:
     raise SystemExit('Snapshot is not ready; wait for completionPercent=100')
-if s.get('diskSizeGB', s.get('diskSizeGb', 0)) > 512:
-    raise SystemExit('Snapshot exceeds the configured 512 GiB disk size')
+if s.get('diskSizeGB', s.get('diskSizeGb', 0)) > int(sys.argv[3]):
+    raise SystemExit('Snapshot exceeds the configured data disk size')
 CHECK
   done
 fi

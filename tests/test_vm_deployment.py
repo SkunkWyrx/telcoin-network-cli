@@ -27,6 +27,32 @@ class VmDeploymentTests(unittest.TestCase):
         environment.start()
         self.addCleanup(environment.stop)
 
+    def test_small_disks_preview_includes_growth_service_and_disk_scoped_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            key = Path(tmp, 'id.pub')
+            key.write_text('ssh-ed25519 AAAATEST preview')
+            env = dict(os.environ, ACR_NAME='testregistry', VM_DNS_LABEL='small-observer',
+                       VM_NAME='small-observer', AZURE_SUBSCRIPTION_ID='sub', AZURE_RESOURCE_GROUP='rg',
+                       SSH_SOURCE_CIDR='192.0.2.1/32', SSH_PUBLIC_KEY_FILE=str(key), PREVIEW_DIR=tmp,
+                       EXECUTION_DISK_SIZE_GB='50', CONSENSUS_DISK_SIZE_GB='50', DISK_AUTO_GROW_ENABLED='true')
+            subprocess.run(['bash', str(ROOT / 'scripts/deploy-azure-vm.sh'), '--preview'],
+                           env=env, check=True, capture_output=True)
+            params = json.loads(Path(tmp, 'parameters.json').read_text())['parameters']
+            self.assertEqual(params['executionDiskSizeGB']['value'], 50)
+            self.assertEqual(params['consensusDiskSizeGB']['value'], 50)
+            self.assertTrue(params['diskAutoGrowEnabled']['value'])
+            cloud = base64.b64decode(params['customData']['value']).decode()
+            self.assertIn('/etc/telcoin/disk-growth.json', cloud)
+            self.assertIn('telcoin-disk-growth.timer', cloud)
+            policy_block = cloud.split('  - path: /etc/telcoin/disk-growth.json', 1)[1]
+            encoded = policy_block.split('content: ', 1)[1].splitlines()[0]
+            policy = json.loads(base64.b64decode(encoded))
+            self.assertEqual(policy['threshold_percent'], 75)
+            self.assertEqual(policy['increment_gb'], 50)
+            self.assertEqual([d['lun'] for d in policy['disks']], [0, 1])
+            self.assertTrue(all(d['id'].endswith('small-observer-' + k)
+                                for d, k in zip(policy['disks'], ['execution', 'consensus'])))
+
     def test_private_pool_preview_contains_digest_and_readiness(self):
         with tempfile.TemporaryDirectory() as tmp:
             key = Path(tmp, 'id.pub')

@@ -59,6 +59,18 @@ class ManagementTests(unittest.TestCase):
         with self.assertRaises(ValueError): run(f, 'remove', 'one')
         f.remove.assert_not_called()
 
+    def test_storage_replacement_reuses_promoted_image_without_rebuild(self):
+        f = self.fleet()
+        with tempfile.TemporaryDirectory() as directory:
+            f.state = Path(directory)
+            image = 'registry.azurecr.io/telcoin-observer/adiri@sha256:' + 'a' * 64
+            (f.state / 'latest-release.json').write_text(json.dumps(
+                {'network': 'adiri', 'image': image, 'validated': True}))
+            run(f, 'replace', image)
+        f.replace_fresh.assert_called_once_with(image)
+        f.build.assert_not_called()
+        f.upgrade.assert_not_called()
+
     def test_build_never_mutates_membership(self):
         f = self.fleet()
         run(f, 'build', 'refs/tags/v0.16.0-adiri')

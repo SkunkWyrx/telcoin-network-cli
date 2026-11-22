@@ -379,6 +379,17 @@ sync
                    EXECUTION_SNAPSHOT_ID=pair.get('execution', ''), CONSENSUS_SNAPSHOT_ID=pair.get('consensus', ''),
                    EXISTING_SUBNET_ID=self.subnet_id(), BACKEND_POOL_ID=self.backend_id(),
                    PRIVATE_RPC_SOURCE_CIDRS=self.c.get('private_rpc_source_cidrs', self.c.get('api_cidr', '10.51.0.0/16')), PUBLIC_RPC_ENABLED='false')
+        storage = self.c.get('storage', {})
+        for key, env_key in [('execution_size_gb', 'EXECUTION_DISK_SIZE_GB'), ('consensus_size_gb', 'CONSENSUS_DISK_SIZE_GB')]:
+            size = storage.get(key, 512)
+            if not fresh:
+                kind = 'execution' if key.startswith('execution') else 'consensus'
+                source = self.az('snapshot', 'show', '--ids', pair[kind])
+                size = max(size, int(source.get('diskSizeGB', source.get('diskSizeGb'))))
+            env[env_key] = str(size)
+        env['DISK_AUTO_GROW_ENABLED'] = str(storage.get('auto_grow', False)).lower()
+        env['DISK_GROW_THRESHOLD_PERCENT'] = str(storage.get('threshold_percent', 75))
+        env['DISK_GROW_INCREMENT_GB'] = str(storage.get('increment_gb', 50))
         env['AZURE_LOCATION'] = self.c['location']
         settings = json.loads(execute(['bash', '-c',
             'set -a; source "$1"; python3 -c ' + shlex.quote(
@@ -512,7 +523,7 @@ sync
         self.ssh(new, 'apt-get update -qq\nDEBIAN_FRONTEND=noninteractive apt-get install -y -qq certbot dnsutils\n')
         # Pause renewal while copying its private state. No archive is logged or written on the runner.
         self.ssh(old, 'systemctl stop oprail-rpc-renew.timer\n'
-                 'while systemctl is-active --quiet oprail-rpc-renew.service; do sleep 2; done\n')
+                 'while [[ $(systemctl show -p ActiveState --value oprail-rpc-renew.service) =~ ^(activating|active|deactivating)$ ]]; do sleep 2; done\n')
         try:
             archive = self.ssh(old, 'set -o pipefail\n'
                                'paths=(var/lib/oprail-acme etc/telcoin/acme '

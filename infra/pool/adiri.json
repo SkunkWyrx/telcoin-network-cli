@@ -41,7 +41,9 @@
   "private_rpc_source_cidrs": "10.51.0.0/16,10.52.2.0/27",
   "public_rpc": {
     "hostname": "adiri-orbs.oprail.com",
-    "aliases": ["rpc-adiri.oprail.com"],
+    "aliases": [
+      "rpc-adiri.oprail.com"
+    ],
     "frontend": "20.12.235.224",
     "load_balancer": "adiri-observers-public",
     "public_ip_name": "adiri-observers-public-ip",
@@ -49,5 +51,12 @@
     "vault": "oprail-adiri-rpc-tls",
     "secret": "adiri-rpc-cert-bundle",
     "proxy_image": "nginx@sha256:583b7f2fce1cdb8da5ad5c39ebd3c33b98b87d493190e548bdee1fa8c619c311"
+  },
+  "storage": {
+    "execution_size_gb": 50,
+    "consensus_size_gb": 50,
+    "auto_grow": true,
+    "threshold_percent": 75,
+    "increment_gb": 50
   }
 }

@@ -9,6 +9,13 @@ param dataDiskIops int = 5000
 @minValue(125)
 @maxValue(1200)
 param dataDiskMbps int = 125
+@minValue(6)
+@maxValue(65536)
+param executionDiskSizeGB int = 512
+@minValue(6)
+@maxValue(65536)
+param consensusDiskSizeGB int = 512
+param diskAutoGrowEnabled bool = false
 param adminUsername string = 'azureuser'
 param sshPublicKey string
 param sshSourceCidr string
@@ -129,7 +136,7 @@ resource disks 'Microsoft.Compute/disks@2024-03-02' = [for (suffix, index) in ['
       createOption: 'Copy'
       sourceResourceId: snapshotIds[index]
     }
-    diskSizeGB: 512
+    diskSizeGB: index == 0 ? executionDiskSizeGB : consensusDiskSizeGB
     diskIOPSReadWrite: dataDiskIops
     diskMBpsReadWrite: dataDiskMbps
   }
@@ -184,3 +191,16 @@ module pull 'acr-pull.bicep' = {
 }
 output fqdn string = ip.properties.dnsSettings.fqdn
 output vmId string = vm.id
+
+resource growthRole 'Microsoft.Authorization/roleDefinitions@2022-04-01' existing = {
+  name: guid(resourceGroup().id, 'observer-disk-growth')
+}
+resource growthAccess 'Microsoft.Authorization/roleAssignments@2022-04-01' = [for (suffix, index) in ['execution', 'consensus']: if (diskAutoGrowEnabled) {
+  name: guid(disks[index].id, vm.id, 'disk-growth', roleAssignmentSeed)
+  scope: disks[index]
+  properties: {
+    principalId: vm.identity.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: growthRole.id
+  }
+}]
