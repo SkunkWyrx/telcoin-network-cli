@@ -182,6 +182,7 @@ class IssuerHandoffTests(unittest.TestCase):
             f.ssh = Mock(side_effect=['', '', 'encoded-archive', ''])
             f.handoff_issuer({'name': 'old'}, {'name': 'new'})
             self.assertIn('--cert-name adiri-rpc-dual', f.ssh.call_args.args[1])
+            self.assertIn('--no-random-sleep-on-renew', f.ssh.call_args.args[1])
             self.assertEqual(f.c['public_rpc']['issuer'], 'new')
             self.assertEqual(json.loads((f.state / 'issuer.json').read_text()), {'issuer': 'new'})
 

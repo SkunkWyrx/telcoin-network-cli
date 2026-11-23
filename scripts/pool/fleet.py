@@ -539,7 +539,7 @@ sync
             self.ssh(new, 'umask 077\nprintf %s ' + shlex.quote(archive.strip()) +
                      ' | base64 -d | tar -C / -xzf -\n'
                      'systemctl daemon-reload\n'
-                     'certbot renew --dry-run --non-interactive' + cert_args + ' --config-dir /var/lib/oprail-acme/config '
+                     'certbot renew --dry-run --non-interactive --no-random-sleep-on-renew' + cert_args + ' --config-dir /var/lib/oprail-acme/config '
                      '--work-dir /var/lib/oprail-acme/work --logs-dir /var/lib/oprail-acme/logs\n'
                      'python3 /etc/telcoin/cert-sync.py publish\n'
                      'systemctl enable --now oprail-rpc-renew.timer\n')
