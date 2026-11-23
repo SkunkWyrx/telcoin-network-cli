@@ -167,3 +167,12 @@ then assigns it at each new data disk scope. Optional `challengeZones` and
 `certificateVault` inputs delegate only the DNS contributor and certificate
 publisher roles at the dedicated certificate resources for issuer replacement.
 The operations runner cannot redefine the custom disk role.
+
+Certificate handoff validates the active lineage named by
+`public_rpc.certificate_name` (Adiri: `adiri-rpc-dual`) before moving renewal
+responsibility. The DNS hook merges its challenge into existing TXT values using
+conditional writes and removes only its own value afterward. A leftover challenge
+therefore cannot block renewal or cause another challenge to be deleted. Allow at
+least the current 60-second challenge TTL for cached answers to expire. Failed
+validation leaves the original issuer's renewal timer enabled and prevents its
+retirement.

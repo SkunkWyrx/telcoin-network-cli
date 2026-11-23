@@ -31,15 +31,42 @@ def request(record, token, method, body=None, **headers):
         return json.loads(content) if content else None
 
 
+def update_challenge(record, token, value, remove=False):
+    """Merge/remove this challenge with conditional writes to preserve other values."""
+    challenge = {"value": [value]}
+    for _ in range(5):
+        try:
+            current = request(record, token, "GET")
+        except HTTPError as error:
+            if error.code != 404:
+                raise
+            current = None
+        properties = current["properties"] if current else {}
+        records = properties.get("TXTRecords", [])
+        ours = [item for item in records if "".join(item.get("value", [])) == value]
+        if (remove and not ours) or (not remove and ours):
+            return
+        updated = [item for item in records if item not in ours] if remove else records + [challenge]
+        headers = {"If-Match": current["etag"]} if current else {"If-None-Match": "*"}
+        try:
+            if not updated:
+                request(record, token, "DELETE", **headers)
+            else:
+                payload = {"properties": {"TTL": properties.get("TTL", 60), "TXTRecords": updated}}
+                if "metadata" in properties:
+                    payload["properties"]["metadata"] = properties["metadata"]
+                request(record, token, "PUT", payload, **headers)
+            return
+        except HTTPError as error:
+            if remove and error.code == 404:
+                return
+            if error.code not in (409, 412):
+                raise
+    raise RuntimeError("DNS record kept changing; retry the challenge")
+
+
 def cleanup(record, token, value):
-    try:
-        current = request(record, token, "GET")
-        if current["properties"]["TXTRecords"] != [{"value": [value]}]:
-            raise RuntimeError("Refusing to remove a TXT record with different contents")
-        request(record, token, "DELETE", **{"If-Match": current["etag"]})
-    except HTTPError as exc:
-        if exc.code != 404:
-            raise
+    update_challenge(record, token, value, remove=True)
 
 
 def main():
@@ -59,8 +86,7 @@ def main():
     if mode == "cleanup":
         cleanup(record, token, value)
     elif mode == "auth":
-        payload = {"properties": {"TTL": 60, "TXTRecords": [{"value": [value]}]}}
-        request(record, token, "PUT", payload, **{"If-None-Match": "*"})
+        update_challenge(record, token, value)
         try:
             deadline = time.monotonic() + 180
             while time.monotonic() < deadline:
@@ -68,7 +94,9 @@ def main():
                     ["dig", "+time=3", "+tries=1", "+short", "@" + ns, zone, "TXT"],
                     capture_output=True, text=True, timeout=5, check=False,
                 ).stdout.splitlines() for ns in servers):
-                    time.sleep(15)
+                    # Existing challenge records use a 60-second TTL. Allow cached
+                    # prior values to expire after all authoritative servers agree.
+                    time.sleep(65)
                     return
                 time.sleep(5)
             raise RuntimeError("Challenge did not reach all Azure nameservers")
