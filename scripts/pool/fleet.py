@@ -504,6 +504,10 @@ sync
             return
         if config['issuer'] != old['name']:
             raise ValueError('Unexpected certificate issuer')
+        cert_name = config.get('certificate_name')
+        if cert_name and not re.fullmatch(r'[A-Za-z0-9._-]+', cert_name):
+            raise ValueError('Invalid renewal certificate name')
+        cert_args = ' --cert-name ' + shlex.quote(cert_name) if cert_name else ''
         old_vm, new_vm = self.vm(old), self.vm(new)
         assignments = self.az('role', 'assignment', 'list', '--all', '--query',
                               "[?principalId=='" + old_vm['identity']['principalId'] + "']")
@@ -535,7 +539,7 @@ sync
             self.ssh(new, 'umask 077\nprintf %s ' + shlex.quote(archive.strip()) +
                      ' | base64 -d | tar -C / -xzf -\n'
                      'systemctl daemon-reload\n'
-                     'certbot renew --dry-run --non-interactive --config-dir /var/lib/oprail-acme/config '
+                     'certbot renew --dry-run --non-interactive --no-random-sleep-on-renew' + cert_args + ' --config-dir /var/lib/oprail-acme/config '
                      '--work-dir /var/lib/oprail-acme/work --logs-dir /var/lib/oprail-acme/logs\n'
                      'python3 /etc/telcoin/cert-sync.py publish\n'
                      'systemctl enable --now oprail-rpc-renew.timer\n')

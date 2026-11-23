@@ -41,6 +41,7 @@
   "private_rpc_source_cidrs": "10.51.0.0/16,10.52.2.0/27",
   "public_rpc": {
     "hostname": "adiri-orbs.oprail.com",
+    "certificate_name": "adiri-rpc-dual",
     "aliases": [
       "rpc-adiri.oprail.com"
     ],

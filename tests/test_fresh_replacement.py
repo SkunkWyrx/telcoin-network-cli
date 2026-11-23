@@ -170,6 +170,22 @@ class RetirementTests(unittest.TestCase):
 
 
 class IssuerHandoffTests(unittest.TestCase):
+    def test_handoff_checks_only_configured_active_certificate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            f = object.__new__(Fleet)
+            f.state = Path(directory)
+            f.c = {'subscription': 'sub', 'resource_group': 'rg',
+                   'public_rpc': {'issuer': 'old', 'vault': 'vault', 'secret': 'bundle',
+                                  'certificate_name': 'adiri-rpc-dual'}}
+            f.vm = Mock(side_effect=[{'identity': {'principalId': 'old-id'}}, {'identity': {'principalId': 'new-id'}}])
+            f.az = Mock(return_value=[])
+            f.ssh = Mock(side_effect=['', '', 'encoded-archive', ''])
+            f.handoff_issuer({'name': 'old'}, {'name': 'new'})
+            self.assertIn('--cert-name adiri-rpc-dual', f.ssh.call_args.args[1])
+            self.assertIn('--no-random-sleep-on-renew', f.ssh.call_args.args[1])
+            self.assertEqual(f.c['public_rpc']['issuer'], 'new')
+            self.assertEqual(json.loads((f.state / 'issuer.json').read_text()), {'issuer': 'new'})
+
     def test_failed_renewal_restores_old_issuer_timer_and_keeps_identity(self):
         with tempfile.TemporaryDirectory() as directory:
             f = object.__new__(Fleet)
