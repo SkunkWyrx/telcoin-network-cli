@@ -179,3 +179,111 @@ class TagUpgradeTests(unittest.TestCase):
 
 
 if __name__ == '__main__': unittest.main()
+
+class FreshBranchTests(unittest.TestCase):
+    image = 'registry.azurecr.io/telcoin-observer/adiri@sha256:' + 'c' * 64
+
+    def fleet(self, directory, ref='refs/heads/main', network='adiri'):
+        f = Mock()
+        f.c = {'network': network}
+        f.state = Path(directory)
+        (f.state / 'candidate.json').write_text(json.dumps(
+            {'network': network, 'ref': ref, 'image': self.image, 'commit': 'd' * 40}))
+        return f
+
+    def test_consumes_built_digest_and_promotes_after_fresh_rollout(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as directory:
+            f = self.fleet(directory)
+            with patch('management_operation.reconcile', return_value={'one'}):
+                run(f, 'fresh-ref', 'refs/heads/main')
+            self.assertEqual([c[0] for c in f.method_calls], ['replace_fresh', 'promote'])
+            f.replace_fresh.assert_called_once_with(self.image)
+            f.promote.assert_called_once_with(self.image)
+
+    def test_failed_sync_does_not_promote(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as directory:
+            f = self.fleet(directory)
+            f.replace_fresh.side_effect = RuntimeError('Sync gate failed')
+            with patch('management_operation.reconcile', return_value={'one'}), self.assertRaises(RuntimeError):
+                run(f, 'fresh-ref', 'refs/heads/main')
+            f.promote.assert_not_called()
+            f.build.assert_not_called()
+
+    def test_wrong_branch_or_network_candidate_is_rejected(self):
+        from unittest.mock import patch
+        for ref, network in [('refs/heads/other', 'adiri'), ('refs/heads/main', 'mainnet')]:
+            with self.subTest(ref=ref, network=network), tempfile.TemporaryDirectory() as directory:
+                f = self.fleet(directory, ref, network)
+                f.c['network'] = 'adiri'
+                with patch('management_operation.reconcile', return_value={'one'}), self.assertRaises(ValueError):
+                    run(f, 'fresh-ref', 'refs/heads/main')
+                f.replace_fresh.assert_not_called()
+                f.promote.assert_not_called()
+
+    def test_mainnet_rejected_before_any_azure_call(self):
+        with tempfile.TemporaryDirectory() as directory:
+            f = self.fleet(directory, network='mainnet')
+            with self.assertRaisesRegex(ValueError, 'limited to Adiri'):
+                run(f, 'fresh-ref', 'refs/heads/main')
+            f.az.assert_not_called()
+            f.replace_fresh.assert_not_called()
+
+    def test_resume_reuses_existing_replacement_without_rebuilding_branch(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as directory:
+            f = self.fleet(directory)
+            (f.state / 'replacement.json').write_text(json.dumps(
+                {'status': 'running', 'image': self.image, 'steps': []}))
+            with patch('management_operation.reconcile', return_value={'one', 'replacement'}):
+                run(f, 'fresh-ref', 'refs/heads/main')
+            f.replace_fresh.assert_called_once_with(self.image)
+            f.build.assert_not_called()
+            f.promote.assert_called_once_with(self.image)
+
+    def test_changed_candidate_cannot_resume_another_image(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as directory:
+            f = self.fleet(directory)
+            (f.state / 'replacement.json').write_text(json.dumps(
+                {'status': 'running', 'image': self.image.replace('c' * 64, 'e' * 64), 'steps': []}))
+            with patch('management_operation.reconcile', return_value={'one'}), self.assertRaises(ValueError):
+                run(f, 'fresh-ref', 'refs/heads/main')
+            f.replace_fresh.assert_not_called()
+            f.promote.assert_not_called()
+
+    def test_retirement_retry_validates_image_and_waits_before_old_node_cleanup(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as directory:
+            f = self.fleet(directory)
+            new = {'name': 'replacement'}
+            f.c['nodes'] = [new]
+            (f.state / 'replacement.json').write_text(json.dumps(
+                {'status': 'running', 'image': self.image,
+                 'steps': [{'stage': 'retiring', 'name': 'replacement', 'old': {'name': 'old'}}]}))
+            with patch('management_operation.reconcile', return_value={'replacement'}):
+                run(f, 'fresh-ref', 'refs/heads/main')
+            self.assertEqual([c[0] for c in f.method_calls],
+                             ['wait_synced', 'remove', 'save', 'replace_fresh', 'promote'])
+            f.wait_synced.assert_called_once_with(new)
+            f.remove.assert_called_once_with('old')
+            f.build.assert_not_called()
+
+    def test_wrong_image_blocks_retirement_retry_before_deletion(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as directory:
+            f = self.fleet(directory)
+            (f.state / 'replacement.json').write_text(json.dumps(
+                {'status': 'running', 'image': self.image.replace('c' * 64, 'e' * 64),
+                 'steps': [{'stage': 'retiring', 'name': 'replacement', 'old': {'name': 'old'}}]}))
+            with patch('management_operation.reconcile') as reconcile, self.assertRaises(ValueError):
+                run(f, 'fresh-ref', 'refs/heads/main')
+            f.remove.assert_not_called()
+            reconcile.assert_not_called()
+
+    def test_branch_reference_validation(self):
+        validate('fresh-ref', 'refs/heads/main')
+        for ref in ['main', 'refs/tags/v0.17.0-adiri', 'refs/heads/main;reboot', 'refs/heads/main\n']:
+            with self.subTest(ref=ref), self.assertRaises(ValueError):
+                validate('fresh-ref', ref)
