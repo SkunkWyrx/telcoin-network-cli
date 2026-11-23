@@ -18,6 +18,7 @@ def validate(operation, argument):
     patterns = {'check': r'cluster', 'add': r'[1-9][0-9]?', 'remove': r'[A-Za-z0-9][A-Za-z0-9-]{0,63}',
                 'snapshot': r'[A-Za-z0-9][A-Za-z0-9-]{0,63}',
                 'build': r'refs/(tags|heads)/[A-Za-z0-9._/-]+',
+                'fresh-ref': r'refs/heads/[A-Za-z0-9][A-Za-z0-9._/-]*',
                 'fresh-tag': r'v[0-9]+\.[0-9]+\.[0-9]+(?:[.-][A-Za-z0-9._-]+)?',
                 'upgrade-tag': r'v[0-9]+\.[0-9]+\.[0-9]+(?:[.-][A-Za-z0-9._-]+)?',
                 'recover-tag': r'v[0-9]+\.[0-9]+\.[0-9]+(?:[.-][A-Za-z0-9._-]+)?',
@@ -60,22 +61,25 @@ def reconcile(fleet):
 
 def run(fleet, operation, argument, env_root=Path('/etc/oprail-observers')):
     validate(operation, argument)
+    if operation == 'fresh-ref' and fleet.c['network'] != 'adiri':
+        raise ValueError('Branch-based fresh database trials are limited to Adiri')
+    release_ref = argument if operation == 'fresh-ref' else 'refs/tags/' + argument
     if operation == 'build':
         fleet.build(argument)
         return
-    pending_replacement = fleet.state / 'replacement.json' if operation in ('fresh-tag', 'replace') else None
+    pending_replacement = fleet.state / 'replacement.json' if operation in ('fresh-tag', 'fresh-ref', 'replace') else None
     if pending_replacement and pending_replacement.exists():
         replacement = json.loads(pending_replacement.read_text())
         retiring = [s for s in replacement['steps'] if s['stage'] == 'retiring']
         # Only finish the exact persisted cleanup before checking live membership.
         for step in retiring:
-            release_file = 'candidate.json' if operation == 'fresh-tag' else 'latest-release.json'
+            release_file = 'candidate.json' if operation in ('fresh-tag', 'fresh-ref') else 'latest-release.json'
             candidate = json.loads((fleet.state / release_file).read_text())
-            matches = (candidate.get('ref') == 'refs/tags/' + argument if operation == 'fresh-tag'
+            matches = (candidate.get('ref') == release_ref if operation in ('fresh-tag', 'fresh-ref')
                        else candidate.get('validated') and candidate['image'] == argument)
             if (candidate.get('network') != fleet.c['network'] or not matches or
                     candidate['image'] != replacement['image']):
-                raise ValueError('Resume the active replacement with its original tag')
+                raise ValueError('Resume the active replacement with its original reference')
             new = next(n for n in fleet.c['nodes'] if n['name'] == step['name'])
             fleet.wait_synced(new)
             fleet.remove(step['old']['name'])
@@ -99,31 +103,31 @@ def run(fleet, operation, argument, env_root=Path('/etc/oprail-observers')):
         if len(actual) < 2 or argument not in actual:
             raise ValueError('Cannot remove final or unknown observer')
         fleet.remove(argument)
-    elif operation in ('upgrade-tag', 'recover-tag', 'fresh-tag'):
+    elif operation in ('upgrade-tag', 'recover-tag', 'fresh-tag', 'fresh-ref'):
         if fleet.c['network'] == 'mainnet' and 'adiri' in argument:
             raise ValueError('Mainnet upgrades require a mainnet release tag')
-        if fleet.c['network'] == 'adiri' and not argument.endswith('-adiri'):
+        if operation != 'fresh-ref' and fleet.c['network'] == 'adiri' and not argument.endswith('-adiri'):
             raise ValueError('Adiri upgrades require an Adiri release tag')
         pending = fleet.state / 'replacement.json'
-        if operation == 'fresh-tag' and pending.exists():
+        if operation in ('fresh-tag', 'fresh-ref') and pending.exists():
             previous = json.loads(pending.read_text())
             if previous['status'] != 'completed':
                 candidate = json.loads((fleet.state / 'candidate.json').read_text())
                 if (candidate.get('network') != fleet.c['network'] or
-                        candidate.get('ref') != 'refs/tags/' + argument or candidate['image'] != previous['image']):
-                    raise ValueError('Resume the active replacement with its original tag')
+                        candidate.get('ref') != release_ref or candidate['image'] != previous['image']):
+                    raise ValueError('Resume the active replacement with its original reference')
                 fleet.replace_fresh(previous['image'])
                 fleet.promote(previous['image'])
                 return
         if operation in ('upgrade-tag', 'fresh-tag'):
             print('Stage: resolve tag and build pinned candidate', flush=True)
-            fleet.build('refs/tags/' + argument)
+            fleet.build(release_ref)
         release = json.loads((fleet.state / 'candidate.json').read_text())
-        if release.get('network') != fleet.c['network'] or release.get('ref') != 'refs/tags/' + argument:
-            raise ValueError('Build candidate does not match requested network and tag')
+        if release.get('network') != fleet.c['network'] or release.get('ref') != release_ref:
+            raise ValueError('Build candidate does not match requested network and reference')
         image = pinned_image(release['image'])
         print('Stage: roll out one node at a time with sync gates', flush=True)
-        if operation == 'fresh-tag':
+        if operation in ('fresh-tag', 'fresh-ref'):
             fleet.replace_fresh(image)
         elif operation == 'recover-tag':
             print('Explicit recovery: cold backup of each node before migration; first node must sync before continuing', flush=True)

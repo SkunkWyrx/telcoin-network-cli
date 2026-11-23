@@ -176,3 +176,28 @@ therefore cannot block renewal or cause another challenge to be deleted. Allow a
 least the current 60-second challenge TTL for cached answers to expire. Failed
 validation leaves the original issuer's renewal timer enabled and prevents its
 retirement.
+
+### Adiri trials from an upstream branch
+
+Database changes on upstream `main` can be tested with fresh disks without
+promoting an untested image or modifying the existing observer in place:
+
+1. Request `build` with `refs/heads/main` in the Adiri management workflow and
+   approve its environment gate. The Adiri profile builds Telcoin-Association's
+   source with the `adiri` feature and records the resolved source commit and
+   immutable image digest in `candidate.json` on the runner.
+2. After the build succeeds, request `fresh-ref` with `refs/heads/main` and
+   approve the rollout. This consumes the existing matching candidate; it does
+   not rebuild a branch that may have advanced since the first approval.
+3. The normal fresh-database replacement gates apply: blank disks and new keys,
+   sync and HTTPS validation, certificate issuer handoff, then retirement of the
+   old VM and disks. Only successful completion promotes that image for later
+   nodes. With one starting observer, the final fleet remains one observer.
+
+The management page exposes the same two operations. `fresh-ref` is limited to
+Adiri by the trusted runner; mainnet continues to use release tags. Retrying an
+interrupted rollout reuses its recorded image and replacement VM, and refuses a
+changed candidate. Do not build another candidate while a rollout is incomplete.
+Allow a sufficiently long runtime `upgrade_timeout_seconds` for network sync;
+the current Adiri runner uses 24 hours. New disks use the normal 50 GiB initial
+capacity and grow by 50 GiB at 75% usage.
