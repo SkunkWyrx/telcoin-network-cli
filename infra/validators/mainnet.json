@@ -1,0 +1,106 @@
+{
+  "role": "validator",
+  "network": "mainnet",
+  "subscription": "8a149d4d-c52a-4432-929e-de754584e269",
+  "resource_group": "oprail-validator-mainnet",
+  "location": "centralus",
+  "initial_node_count": 1,
+  "node_name_prefix": "mainnet-validator-",
+  "vm": {
+    "size": "Standard_D16s_v6",
+    "zone": "1",
+    "os": "Ubuntu 24.04 LTS",
+    "architecture": "x86_64",
+    "security_type": "TrustedLaunch",
+    "vtpm_enabled": true,
+    "secure_boot_enabled": true
+  },
+  "release": {
+    "scripts_network": "mainnet",
+    "chain": "mainnet",
+    "chain_id": "0x2db",
+    "features": "",
+    "image_repository": "ghcr.io/telcoin-association/tn-mainnet",
+    "tag": "",
+    "pin_signed_release_digest": true
+  },
+  "reference_rpc": "https://rpc.telcoin.network",
+  "networking": {
+    "vnet_name": "oprail-validator-mainnet-vnet",
+    "address_prefix": "10.58.0.0/16",
+    "node_subnet": {
+      "name": "validators",
+      "prefix": "10.58.0.0/24"
+    },
+    "management_subnet": {
+      "name": "management",
+      "prefix": "10.58.1.0/27"
+    },
+    "public_p2p": true,
+    "p2p_udp_ports": [
+      49590,
+      49594
+    ],
+    "public_rpc": false,
+    "rpc_bind_address": "127.0.0.1",
+    "http_rpc_port": 8545,
+    "ws_rpc_port": 8546,
+    "metrics_bind_address": "127.0.0.1",
+    "public_tcp_ports": [],
+    "management_access": "AzureRunCommand",
+    "ssh_source_cidrs": [],
+    "advertised_transaction_rpc_url": "",
+    "p2p_source_cidrs": []
+  },
+  "storage": {
+    "datadir": "/var/lib/telcoin",
+    "filesystem": "ext4",
+    "type": "PremiumV2_LRS",
+    "execution": {
+      "lun": 0,
+      "size_gb": 100,
+      "iops": 20000,
+      "throughput_mbps": 300,
+      "mount": "/var/lib/telcoin/db"
+    },
+    "consensus": {
+      "lun": 1,
+      "size_gb": 100,
+      "iops": 3000,
+      "throughput_mbps": 125,
+      "mount": "/mnt/telcoin-consensus"
+    },
+    "bind_mounts": {
+      "/var/lib/telcoin/consensus-db": "/mnt/telcoin-consensus/consensus-db",
+      "/var/lib/telcoin/static_files": "/mnt/telcoin-consensus/static_files"
+    },
+    "required_mounts": [
+      "/var/lib/telcoin/db",
+      "/var/lib/telcoin/consensus-db",
+      "/var/lib/telcoin/static_files"
+    ],
+    "delete_with_vm": false,
+    "auto_grow": {
+      "enabled": true,
+      "threshold_percent": 75,
+      "increment_gb": 50
+    }
+  },
+  "identity": {
+    "execution_address": "",
+    "preserve_registered_keys": true,
+    "credential_storage": "systemd-host+tpm2",
+    "passphrase_vault": "oprail-val-mainnet-keys",
+    "passphrase_secret": "validator-1-bls-passphrase"
+  },
+  "operations": {
+    "runner_label": "validator-operations-mainnet",
+    "approval_environment": "validator-operations-mainnet",
+    "automatic_staking": false,
+    "automatic_activation": false,
+    "preserve_consensus_signing_state": true,
+    "quorum_check_before_restart": true,
+    "epoch_aware_restart": true
+  },
+  "dns_label": "oprail-validator-mainnet-1"
+}

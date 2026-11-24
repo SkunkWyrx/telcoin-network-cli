@@ -1,0 +1,84 @@
+name: Validator deployment
+run-name: 'Validator ${{ inputs.network }} / ${{ inputs.phase }}'
+on:
+  pull_request:
+    paths: ['infra/validators/**', 'scripts/validators/**', 'tests/test_validator*', '.github/workflows/validator-deployment.yml']
+  workflow_dispatch:
+    inputs:
+      network:
+        type: choice
+        options: [adiri, mainnet]
+        required: true
+      phase:
+        type: choice
+        options: [plan, provision, prepare, export, finalize, network, status]
+        default: plan
+      release_tag:
+        type: string
+        default: ''
+      execution_address:
+        type: string
+        default: ''
+      acknowledge_key_backup:
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: validator-${{ inputs.network || github.ref }}
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 -m unittest discover -s tests -p 'test_validator*.py'
+      - run: python3 scripts/validators/deploy.py --network adiri
+      - run: python3 scripts/validators/deploy.py --network mainnet
+      - run: az bicep build --file infra/validators/main.bicep --outfile /tmp/validator.json
+  deploy:
+    needs: validate
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.phase != 'plan' && vars.VALIDATOR_DEPLOYMENT_ENABLED == 'true' && (inputs.network != 'mainnet' || inputs.phase != 'finalize' || vars.VALIDATOR_MAINNET_ENABLED == 'true')
+    runs-on: ubuntu-latest
+    environment: validator-operations-${{ inputs.network }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      NETWORK: ${{ inputs.network }}
+      PHASE: ${{ inputs.phase }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      EXECUTION_ADDRESS: ${{ inputs.execution_address }}
+      ACK_BACKUP: ${{ inputs.acknowledge_key_backup }}
+      SSH_PUBLIC_KEY: ${{ vars.VALIDATOR_SSH_PUBLIC_KEY }}
+      KEY_CUSTODIAN: ${{ vars.VALIDATOR_KEY_CUSTODIAN_OBJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Run only the selected validator network and phase
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(--network "$NETWORK" --phase "$PHASE" --apply)
+          if [ -n "$RELEASE_TAG" ]; then args+=(--release-tag "$RELEASE_TAG"); fi
+          if [ -n "$EXECUTION_ADDRESS" ]; then args+=(--execution-address "$EXECUTION_ADDRESS"); fi
+          if [ "$ACK_BACKUP" = true ]; then args+=(--acknowledge-key-backup); fi
+          if [ "$PHASE" = provision ]; then
+            test -n "$SSH_PUBLIC_KEY" && test -n "$KEY_CUSTODIAN"
+            printf '%s\n' "$SSH_PUBLIC_KEY" > /tmp/validator.pub
+            args+=(--ssh-public-key-file /tmp/validator.pub --operator-principal-id "$KEY_CUSTODIAN")
+          fi
+          python3 scripts/validators/deploy.py "${args[@]}"
+      - uses: actions/upload-artifact@v4
+        if: inputs.phase == 'export'
+        with:
+          name: validator-${{ inputs.network }}-public-onboarding
+          path: .validator-state/${{ inputs.network }}/onboarding.json
+          retention-days: 7
