@@ -147,10 +147,9 @@ seed list. Inventory recovery/reconciliation must be reviewed against Azure
 before replacing this state. Back it up and restrict
 write access. A central blob manifest store is planned, not provisioned here.
 
-Mainnet is intentionally unconfigured: copy `mainnet.example.json` to a separate
-profile and supply independently verified chain ID, reference, registry, CIDRs,
-and keys. The Adiri topology deployer rejects mainnet rather than silently reusing
-its network. Mainnet activation is a separate deployment/validation exercise.
+Mainnet uses `infra/pool/mainnet.json` with its own registry, CIDRs and resource
+groups. Supply a verified mainnet reference RPC and release before bootstrap.
+See [mainnet bootstrap and fresh upgrades](mainnet-and-fresh-upgrades.md).
 
 ## 2. Sequential upgrades
 

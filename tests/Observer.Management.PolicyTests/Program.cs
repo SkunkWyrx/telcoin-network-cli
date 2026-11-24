@@ -57,3 +57,12 @@ try {
     Check(body["nodes"]![0]!["clientVersion"]!.GetValue<string>() == "telcoin-network/v0.17.0" && body["nodes"]![1]!["clientVersion"]!.GetValue<string>() == "telcoin-network/v0.16.0", "Node versions are serialized independently during mixed-version rollouts");
 } finally { await app.StopAsync(); }
 Console.WriteLine("4 HTTP response checks passed.");
+
+Check(Operation.Valid(new("fresh-tag", "v1.0.0")), "Fresh database upgrade by release tag");
+Check(!Operation.Valid(new("fresh-tag", "main; reboot")), "Fresh database upgrade rejects commands");
+Check(Operation.Valid(new("fresh-ref", "refs/heads/main")), "Fresh branch accepts full reference");
+Check(!Operation.Valid(new("fresh-ref", "main")), "Fresh branch rejects short reference");
+Check(!Operation.Valid(new("fresh-ref", "refs/tags/v0.17.0-adiri")), "Fresh branch rejects tags");
+Check(!Operation.Valid(new("fresh-ref", "refs/heads/main\n")), "Fresh branch rejects trailing newline");
+Console.WriteLine("4 fresh-branch operation checks passed.");
+await RpcApiKeyTests.Run();

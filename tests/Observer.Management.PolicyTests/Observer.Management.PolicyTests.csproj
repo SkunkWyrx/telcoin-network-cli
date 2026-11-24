@@ -6,4 +6,5 @@
   <FrameworkReference Include="Microsoft.AspNetCore.App" />
   <Compile Include="../../src/Observer.Management/FleetEndpoints.cs" Link="FleetEndpoints.cs" />
 </ItemGroup>
+<ItemGroup><Compile Include="../../src/Observer.Management/RpcApiKeys.cs" Link="RpcApiKeys.cs" /></ItemGroup>
 </Project>

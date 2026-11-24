@@ -6,7 +6,8 @@ record Operation(string Action, string Argument) {
         "add" => Regex.IsMatch(o.Argument, @"\A[1-9][0-9]?\z"),
         "remove" or "snapshot" => Regex.IsMatch(o.Argument, @"\A[A-Za-z0-9][A-Za-z0-9-]{0,63}\z"),
         "build" => Regex.IsMatch(o.Argument, @"\Arefs/(tags|heads)/[A-Za-z0-9._/-]+\z"),
-        "upgrade-tag" => Regex.IsMatch(o.Argument, @"\Av[0-9]+\.[0-9]+\.[0-9]+(?:[.-][A-Za-z0-9._-]+)?\z"),
+        "fresh-ref" => Regex.IsMatch(o.Argument, @"\Arefs/heads/[A-Za-z0-9][A-Za-z0-9._/-]*\z"),
+        "upgrade-tag" or "fresh-tag" => Regex.IsMatch(o.Argument, @"\Av[0-9]+\.[0-9]+\.[0-9]+(?:[.-][A-Za-z0-9._-]+)?\z"),
         "upgrade" => Regex.IsMatch(o.Argument, @"\A[a-z0-9./-]+@sha256:[a-f0-9]{64}\z"),
         _ => false
     };

@@ -1,0 +1,12 @@
+[Unit]
+Description=Grow observer data disks at the configured utilization threshold
+After=network-online.target
+Wants=network-online.target
+RequiresMountsFor=/var/lib/telcoin/db /mnt/telcoin-consensus
+
+[Service]
+Type=oneshot
+UMask=0077
+StateDirectory=telcoin-disk-growth
+ExecStart=/usr/bin/python3 -B /usr/local/sbin/telcoin-grow-disks
+TimeoutStartSec=50min

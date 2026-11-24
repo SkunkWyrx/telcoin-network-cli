@@ -36,6 +36,9 @@ class Fleet:
         self.config_path = None
         self.state = Path(os.getenv('OBSERVER_STATE_DIR', str(ROOT / '.observer-state'))) / config['network'] / config['pool']
         self.state.mkdir(parents=True, exist_ok=True, mode=0o700)
+        issuer = self.state / 'issuer.json'
+        if issuer.exists() and self.c.get('public_rpc'):
+            self.c['public_rpc']['issuer'] = json.loads(issuer.read_text())['issuer']
         inventory = self.state / 'nodes.json'
         if inventory.exists():
             self.c['nodes'] = json.loads(inventory.read_text())['nodes']
@@ -106,6 +109,8 @@ class Fleet:
     def build(self, ref):
         if not re.fullmatch(r'[A-Za-z0-9._/-]+', ref):
             raise ValueError('Invalid release ref')
+        if self.c['network'] == 'mainnet' and ref.startswith('refs/tags/') and 'adiri' in ref:
+            raise ValueError('Mainnet requires a mainnet release tag')
         # A separate network repository and immutable unique tag prevent cross-network latest.
         if self.c['network'] == 'mainnet' and 'adiri' in self.c['features'].split(','):
             raise ValueError('Mainnet must not compile the adiri feature')
@@ -343,20 +348,20 @@ sync
                 for kind in ('execution', 'consensus'):
                     self.az('snapshot', 'delete', '--ids', pair[kind])
 
-    def add(self, env_file, candidate_image=None):
+    def add(self, env_file, candidate_image=None, fresh=False):
         if candidate_image:
             image = pinned_image(candidate_image)
             expected = self.c['registry'] + '.azurecr.io/' + self.c['repository'] + '@'
             if not image.startswith(expected):
                 raise ValueError('Candidate image is outside the network release repository')
             print('Use an explicit candidate for this new node only:', image)
-        print('Provision from latest completed snapshot pair using', env_file)
+        print('Provision with fresh disks using' if fresh else 'Provision from latest completed snapshot pair using', env_file)
         if self.c.get('public_rpc'):
             print('Public HTTPS membership requires private sync and a verified TLS proxy.')
         if not self.apply:
             return
-        pairs = self.pairs()
-        if not pairs:
+        pairs = [] if fresh else self.pairs()
+        if not fresh and not pairs:
             raise ValueError('No completed owned snapshot pair; refuse genesis fallback')
         if not candidate_image:
             release = json.loads((self.state / 'latest-release.json').read_text())
@@ -365,15 +370,26 @@ sync
             image = pinned_image(release['image'])
         if not image.startswith(self.c['registry'] + '.azurecr.io/'):
             raise ValueError('Promoted release uses a different registry')
-        pair = pairs[-1]
+        pair = {} if fresh else pairs[-1]
         env = dict(os.environ, ENV_FILE=str(Path(env_file).resolve()),
                    AZURE_SUBSCRIPTION_ID=self.c['subscription'], AZURE_RESOURCE_GROUP=self.c['resource_group'],
                    ACR_NAME=self.c['registry'], ACR_RESOURCE_GROUP=self.c['registry_resource_group'],
                    CHAIN=self.c['network'], EXPECTED_CHAIN_ID=self.c['chain_id'], NETWORK_RPC_URL=self.c['reference_rpc'],
                    SKIP_IMAGE_BUILD='true', IMAGE_REPO=image.split('.azurecr.io/', 1)[1].split('@')[0], IMAGE_DIGEST=image.split('@')[1],
-                   EXECUTION_SNAPSHOT_ID=pair['execution'], CONSENSUS_SNAPSHOT_ID=pair['consensus'],
+                   EXECUTION_SNAPSHOT_ID=pair.get('execution', ''), CONSENSUS_SNAPSHOT_ID=pair.get('consensus', ''),
                    EXISTING_SUBNET_ID=self.subnet_id(), BACKEND_POOL_ID=self.backend_id(),
                    PRIVATE_RPC_SOURCE_CIDRS=self.c.get('private_rpc_source_cidrs', self.c.get('api_cidr', '10.51.0.0/16')), PUBLIC_RPC_ENABLED='false')
+        storage = self.c.get('storage', {})
+        for key, env_key in [('execution_size_gb', 'EXECUTION_DISK_SIZE_GB'), ('consensus_size_gb', 'CONSENSUS_DISK_SIZE_GB')]:
+            size = storage.get(key, 512)
+            if not fresh:
+                kind = 'execution' if key.startswith('execution') else 'consensus'
+                source = self.az('snapshot', 'show', '--ids', pair[kind])
+                size = max(size, int(source.get('diskSizeGB', source.get('diskSizeGb'))))
+            env[env_key] = str(size)
+        env['DISK_AUTO_GROW_ENABLED'] = str(storage.get('auto_grow', False)).lower()
+        env['DISK_GROW_THRESHOLD_PERCENT'] = str(storage.get('threshold_percent', 75))
+        env['DISK_GROW_INCREMENT_GB'] = str(storage.get('increment_gb', 50))
         env['AZURE_LOCATION'] = self.c['location']
         settings = json.loads(execute(['bash', '-c',
             'set -a; source "$1"; python3 -c ' + shlex.quote(
@@ -388,9 +404,10 @@ sync
         node = {'name': settings['VM_NAME'],
                 'host': settings['VM_DNS_LABEL'] + '.' + self.c['location'] + '.cloudapp.azure.com',
                 'ordinal': max([n['ordinal'] for n in self.c['nodes']] or [0]) + 1}
-        self.wait_synced(node)
         self.c['nodes'].append(node)
         self.save_profile()
+        # Persist provisioned nodes before the potentially long sync wait.
+        self.wait_synced(node)
         print('Node synced and added to the pool profile:', node['name'])
         if self.c.get('public_rpc'):
             self.install_public_rpc(node)
@@ -463,6 +480,8 @@ sync
             + ' -verify_hostname ' + config['hostname'] + ' -verify_return_error </dev/null >/dev/null',
         ])
         self.ssh(node, '\n'.join(commands) + '\n')
+        if config.get('api_keys'):
+            self.configure_api_keys(node)
         for name, priority, source, address, port in (
             ('Observer-Public-HTTPS', '118', 'Internet', frontend + '/32', '443'),
             ('Observer-Public-Proxy-Probe', '119', 'AzureLoadBalancer', backend + '/32', '19091'),
@@ -475,6 +494,122 @@ sync
                 '--ip-config-name', ipconfig['name'], '--lb-name', config['load_balancer'], '--address-pool', 'observers')
         print('Added verified HTTPS proxy to public backend pool:', node['name'])
 
+    def configure_api_keys(self, node):
+        """Update only proxy policy; never restart an observer or copy its databases."""
+        import importlib.util
+        config = self.c['public_rpc']
+        keys = config['api_keys']
+        spec = importlib.util.spec_from_file_location('rpc_key_sync', ROOT / 'infra/rpc-tls/api-key-sync.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        limits = module.policy(keys)
+        if any(not re.fullmatch(r'[a-z0-9.-]+', name) for name in [config['hostname'], *config.get('aliases', [])]):
+            raise ValueError('Invalid public hostname')
+        if not re.fullmatch(r'[a-z0-9-]{3,24}', keys['vault']):
+            raise ValueError('Invalid API key vault')
+        if not self.apply:
+            print('Configure RPC API key tiers:', node['name'])
+            return
+        vm = self.vm(node)
+        vault = self.az('keyvault', 'show', '-g', self.c['resource_group'], '-n', keys['vault'])
+        if ((vault.get('tags') or {}).get('purpose') != 'oprail-rpc-api-keys' or
+                (vault.get('tags') or {}).get('network') != self.c['network']):
+            raise ValueError('Unexpected API key vault scope')
+        roles = self.az('role', 'assignment', 'list', '--scope', vault['id'], '--fill-principal-name', 'false')
+        if not any(r['principalId'] == vm['identity']['principalId'] and
+                   r['roleDefinitionName'] == 'Key Vault Secrets User' and r['scope'].lower() == vault['id'].lower() for r in roles):
+            self.az('role', 'assignment', 'create', '--assignee-object-id', vm['identity']['principalId'],
+                    '--assignee-principal-type', 'ServicePrincipal', '--role', 'Key Vault Secrets User', '--scope', vault['id'])
+        nic = self.az('network', 'nic', 'show', '--ids', vm['networkProfile']['networkInterfaces'][0]['id'])
+        backend = str(ipaddress.IPv4Address(next(i for i in nic['ipConfigurations'] if i['name'] == 'primary')['privateIPAddress']))
+        replacements = {'@FRONTEND_IP@': str(ipaddress.IPv4Address(config['frontend'])),
+                        '@BACKEND_IP@': backend, '@HOSTNAME@': ' '.join([config['hostname'], *config.get('aliases', [])])}
+        for tier in ('anonymous', 'partner', 'internal', 'backend'):
+            replacements['@' + tier.upper() + '_BURST@'] = str(limits[tier]['burst'])
+        content = (ROOT / 'infra/rpc-tls/nginx-api-keys.conf.in').read_text()
+        for tag, value in replacements.items():
+            content = content.replace(tag, value)
+        commands = ['umask 077', 'install -d -m 0700 /etc/telcoin/rpc-tls']
+        for source, destination in [
+            ('api-key-sync.py', '/etc/telcoin/api-key-sync.py'),
+            ('oprail-rpc-key-sync.service', '/etc/systemd/system/oprail-rpc-key-sync.service'),
+            ('oprail-rpc-key-sync.timer', '/etc/systemd/system/oprail-rpc-key-sync.timer')]:
+            commands.append('printf %s ' + shlex.quote((ROOT / 'infra/rpc-tls' / source).read_text()) + ' > ' + destination)
+        commands += ['printf %s ' + shlex.quote(json.dumps(keys)) + ' > /etc/telcoin/api-keys.json',
+                     'for attempt in $(seq 1 24); do if python3 /etc/telcoin/api-key-sync.py; then break; fi; '
+                     'if [ "$attempt" = 24 ]; then exit 1; fi; sleep 10; done',
+                     'cp -p /etc/telcoin/rpc-tls/nginx.conf /etc/telcoin/rpc-tls/nginx.conf.before-api-keys 2>/dev/null || true',
+                     'printf %s ' + shlex.quote(content) + ' > /etc/telcoin/rpc-tls/nginx.conf.next',
+                     'mv /etc/telcoin/rpc-tls/nginx.conf.next /etc/telcoin/rpc-tls/nginx.conf',
+                     'if systemctl is-active --quiet telcoin-rpc-tls; then '
+                     'if ! docker exec telcoin-rpc-tls nginx -t -c /rpc-tls/nginx.conf >/dev/null 2>&1 || ! systemctl reload telcoin-rpc-tls; then '
+                     'cp -p /etc/telcoin/rpc-tls/nginx.conf.before-api-keys /etc/telcoin/rpc-tls/nginx.conf.next; '
+                     'mv /etc/telcoin/rpc-tls/nginx.conf.next /etc/telcoin/rpc-tls/nginx.conf; '
+                     'systemctl reload telcoin-rpc-tls || true; '
+                     'echo "Proxy policy validation failed; original configuration restored" >&2; exit 1; fi; '
+                     'fi',
+                     'systemctl daemon-reload', 'systemctl enable --now oprail-rpc-key-sync.timer']
+        self.ssh(node, '\n'.join(commands) + '\n')
+        print('RPC API key policy installed:', node['name'])
+
+    def replace_fresh(self, image, template=None):
+        from replacement import replace_fresh
+        replace_fresh(self, image, template or self.c.get(
+            'node_template', '/etc/oprail-observers/' + self.c['network'] + '/template.env'))
+
+    def handoff_issuer(self, old, new):
+        """Move Certbot state and narrowly scoped renewal roles before retiring its host."""
+        config = self.c['public_rpc']
+        if config['issuer'] == new['name']:
+            return
+        if config['issuer'] != old['name']:
+            raise ValueError('Unexpected certificate issuer')
+        cert_name = config.get('certificate_name')
+        if cert_name and not re.fullmatch(r'[A-Za-z0-9._-]+', cert_name):
+            raise ValueError('Invalid renewal certificate name')
+        cert_args = ' --cert-name ' + shlex.quote(cert_name) if cert_name else ''
+        old_vm, new_vm = self.vm(old), self.vm(new)
+        assignments = self.az('role', 'assignment', 'list', '--all', '--query',
+                              "[?principalId=='" + old_vm['identity']['principalId'] + "']")
+        root = ('/subscriptions/' + self.c['subscription'] + '/resourceGroups/' +
+                self.c['resource_group'] + '/providers/').lower()
+        allowed = {'DNS Zone Contributor', 'Key Vault Secrets Officer'}
+        for role in assignments:
+            scope = role['scope'].lower()
+            if role['roleDefinitionName'] in allowed and (
+                    scope.startswith(root + 'microsoft.network/dnszones/_acme-challenge.') or
+                    scope == root + 'microsoft.keyvault/vaults/' + config['vault'].lower() or
+                    scope == root + 'microsoft.keyvault/vaults/' + config['vault'].lower() +
+                    '/secrets/' + config['secret'].lower()):
+                self.az('role', 'assignment', 'create', '--assignee-object-id', new_vm['identity']['principalId'],
+                        '--assignee-principal-type', 'ServicePrincipal', '--role', role['roleDefinitionName'],
+                        '--scope', role['scope'])
+        self.ssh(new, 'apt-get update -qq\nDEBIAN_FRONTEND=noninteractive apt-get install -y -qq certbot dnsutils\n')
+        # Pause renewal while copying its private state. No archive is logged or written on the runner.
+        self.ssh(old, 'systemctl stop oprail-rpc-renew.timer\n'
+                 'while [[ $(systemctl show -p ActiveState --value oprail-rpc-renew.service) =~ ^(activating|active|deactivating)$ ]]; do sleep 2; done\n')
+        try:
+            archive = self.ssh(old, 'set -o pipefail\n'
+                               'paths=(var/lib/oprail-acme etc/telcoin/acme '
+                               'etc/systemd/system/oprail-rpc-renew.service '
+                               'etc/systemd/system/oprail-rpc-renew.timer)\n'
+                               'for path in etc/systemd/system/oprail-rpc-renew.{service,timer}.d; do '
+                               'if [ -d /"$path" ]; then paths+=("$path"); fi; done\n'
+                               'tar -C / -czf - "${paths[@]}" | base64 -w0\n')
+            self.ssh(new, 'umask 077\nprintf %s ' + shlex.quote(archive.strip()) +
+                     ' | base64 -d | tar -C / -xzf -\n'
+                     'systemctl daemon-reload\n'
+                     'certbot renew --dry-run --non-interactive --no-random-sleep-on-renew' + cert_args + ' --config-dir /var/lib/oprail-acme/config '
+                     '--work-dir /var/lib/oprail-acme/work --logs-dir /var/lib/oprail-acme/logs\n'
+                     'python3 /etc/telcoin/cert-sync.py publish\n'
+                     'systemctl enable --now oprail-rpc-renew.timer\n')
+        except Exception:
+            self.ssh(new, 'systemctl disable --now oprail-rpc-renew.timer || true\n')
+            self.ssh(old, 'systemctl start oprail-rpc-renew.timer\n')
+            raise
+        self.save('issuer.json', {'issuer': new['name']})
+        config['issuer'] = new['name']
+
     def save_profile(self):
         # Runtime inventory survives runner checkout cleanup, unlike edits to a tracked profile.
         self.save('nodes.json', {'nodes': self.c['nodes']})
@@ -485,40 +620,68 @@ sync
 
     def backend_id(self):
         return (f"/subscriptions/{self.c['subscription']}/resourceGroups/{self.c['resource_group']}/providers/"
-                f"Microsoft.Network/loadBalancers/{self.c.get('load_balancer', 'adiri-observers')}/backendAddressPools/observers")
+                f"Microsoft.Network/loadBalancers/{self.c.get('load_balancer', self.c['network'] + '-observers')}/backendAddressPools/observers")
 
     def remove(self, name):
-        node = next(n for n in self.c['nodes'] if n['name'] == name)
-        print('Delete node VM and its exact attached disks/NIC/public IP/NSG; preserve shared VNet and LB:', name)
+        if name == (self.c.get('public_rpc') or {}).get('issuer'):
+            raise ValueError('Move the certificate issuer before removing this node')
+        record_name = 'remove-' + name + '.json'
+        record_path = self.state / record_name
+        record = json.loads(record_path.read_text()) if record_path.exists() else None
+        node = next((n for n in self.c['nodes'] if n['name'] == name), None)
+        if node is None and record is None:
+            raise ValueError('Unknown observer')
+        if record and record.get('completed'):
+            if node is None:
+                return
+            record = None
+        print('Delete node VM and its exact attached disks/NIC/public IP/NSG:', name)
         if not self.apply:
             return
         others = [n for n in self.c['nodes'] if n['name'] != name]
         if not any(self.synced(n) for n in others):
             raise ValueError('Refuse removal without another synced observer')
-        vm = self.vm(node)
-        self.ssh(node, 'install -d /run/telcoin\ntouch /run/telcoin/draining\n')
-        time.sleep(self.c.get('drain_seconds', 30))
-        disks = [vm['storageProfile']['osDisk']['managedDisk']['id']]
-        disks += [d['managedDisk']['id'] for d in vm['storageProfile']['dataDisks']]
-        nics = [self.az('network', 'nic', 'show', '--ids', n['id']) for n in vm['networkProfile']['networkInterfaces']]
-        self.az('vm', 'delete', '-g', self.c['resource_group'], '-n', name, '--yes')
-        for nic in nics:
-            ips = [i['publicIPAddress']['id'] for i in nic['ipConfigurations'] if i.get('publicIPAddress')]
-            nsg = nic.get('networkSecurityGroup', {}).get('id')
-            self.az('network', 'nic', 'delete', '--ids', nic['id'])
-            for ip in ips:
-                self.az('network', 'public-ip', 'delete', '--ids', ip)
-            if nsg and nsg.rsplit('/', 1)[-1] == name + '-nsg':
-                self.az('network', 'nsg', 'delete', '--ids', nsg)
-        for disk in disks:
-            self.az('disk', 'delete', '--ids', disk, '--yes')
-        principal = (vm.get('identity') or {}).get('principalId')
-        if principal:
-            assignments = self.az('role', 'assignment', 'list', '--all', '--query', "[?principalId=='" + principal + "']")
+        if record is None:
+            vm = self.vm(node)
+            nics = [self.az('network', 'nic', 'show', '--ids', n['id']) for n in vm['networkProfile']['networkInterfaces']]
+            resources = [('vm', vm['id'])]
+            for nic in nics:
+                resources.append(('network nic', nic['id']))
+                resources.extend(('network public-ip', i['publicIPAddress']['id'])
+                                 for i in nic['ipConfigurations'] if i.get('publicIPAddress'))
+                nsg = nic.get('networkSecurityGroup', {}).get('id')
+                if nsg and nsg.rsplit('/', 1)[-1] == name + '-nsg':
+                    resources.append(('network nsg', nsg))
+            resources.extend(('disk', disk) for disk in
+                             [vm['storageProfile']['osDisk']['managedDisk']['id']] +
+                             [d['managedDisk']['id'] for d in vm['storageProfile']['dataDisks']])
+            record = {'node': node, 'resources': resources, 'stopped': False,
+                      'principal': (vm.get('identity') or {}).get('principalId')}
+            self.save(record_name, record)
+        if not record['stopped']:
+            self.ssh(record['node'], 'install -d /run/telcoin\ntouch /run/telcoin/draining\n')
+            time.sleep(self.c.get('drain_seconds', 30))
+            self.ssh(record['node'], 'systemctl stop telcoin-observer\nsync\n')
+            record['stopped'] = True
+            self.save(record_name, record)
+        # The manifest survives a partial deletion. Azure's current inventory lets a
+        # retry skip resources already removed without relying on a deleted VM.
+        present = {r['id'].lower() for r in self.az('resource', 'list', '-g', self.c['resource_group'])}
+        for kind, identifier in record['resources']:
+            if identifier.lower() in present:
+                args = [*kind.split(), 'delete', '--ids', identifier]
+                if kind in ('vm', 'disk'):
+                    args.append('--yes')
+                self.az(*args)
+        if record['principal']:
+            assignments = self.az('role', 'assignment', 'list', '--all', '--query',
+                                  "[?principalId=='" + record['principal'] + "']")
             for assignment in assignments:
                 self.az('role', 'assignment', 'delete', '--ids', assignment['id'])
         self.c['nodes'] = [n for n in self.c['nodes'] if n['name'] != name]
         self.save_profile()
+        record['completed'] = True
+        self.save(record_name, record)
         print('Node removed from profile; shared pool resources retained.')
 
 
@@ -531,8 +694,9 @@ def main():
     sub.add_parser('snapshot').add_argument('--node', help='Snapshot this node instead of the highest ordinal')
     sub.add_parser('prune')
     for name, argument in [('build', 'ref'), ('promote', 'image'), ('upgrade', 'image'),
-                           ('install-health', 'node'), ('install-public-rpc', 'node'), ('add', 'env_file'), ('remove', 'node')]:
+                           ('replace-fresh', 'image'), ('install-health', 'node'), ('install-public-rpc', 'node'), ('add', 'env_file'), ('remove', 'node')]:
         sub.add_parser(name).add_argument(argument)
+    sub.choices['add'].add_argument('--fresh', action='store_true', help='Create blank data disks and sync from genesis')
     sub.choices['add'].add_argument('--candidate-image', help='Explicit digest for a new node trial; does not promote')
     args = parser.parse_args()
     fleet = Fleet(json.loads(Path(args.config).read_text()), args.apply)
@@ -550,11 +714,11 @@ def main():
         elif args.command == 'snapshot':
             fleet.snapshot(args.node)
         elif args.command == 'add':
-            fleet.add(args.env_file, args.candidate_image)
+            fleet.add(args.env_file, args.candidate_image, fresh=args.fresh)
         else:
             argument = getattr(args, {'build': 'ref', 'promote': 'image', 'upgrade': 'image',
-                                      'add': 'env_file', 'remove': 'node'}.get(args.command, ''), None)
-            getattr(fleet, args.command)(*([argument] if argument is not None else []))
+                                      'add': 'env_file', 'remove': 'node', 'replace-fresh': 'image'}.get(args.command, ''), None)
+            getattr(fleet, args.command.replace('-', '_'))(*([argument] if argument is not None else []))
 
 
 if __name__ == '__main__':

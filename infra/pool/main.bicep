@@ -2,6 +2,8 @@
 param location string = resourceGroup().location
 param observerVnetName string = 'oprail-observer-adiri-vnet'
 param observerSubnetName string = 'observer'
+param observerAddressPrefix string = '10.52.0.0/16'
+param observerSubnetPrefix string = '10.52.0.0/24'
 param loadBalancerName string = 'adiri-observers'
 param privateIp string = '10.52.0.10'
 param apiResourceGroup string = 'oprail-api-adiri'
@@ -15,8 +17,8 @@ resource observerVnet 'Microsoft.Network/virtualNetworks@2024-05-01' = {
   name: observerVnetName
   location: location
   properties: {
-    addressSpace: {addressPrefixes: ['10.52.0.0/16']}
-    subnets: [{name: observerSubnetName, properties: {addressPrefix: '10.52.0.0/24'}}]
+    addressSpace: {addressPrefixes: [observerAddressPrefix]}
+    subnets: [{name: observerSubnetName, properties: {addressPrefix: observerSubnetPrefix}}]
   }
 }
 resource subnet 'Microsoft.Network/virtualNetworks/subnets@2024-05-01' existing = {

@@ -3,6 +3,9 @@ on:
   push:
     branches: [main]
     paths: ['src/Observer.Management/**', 'tests/Observer.Management.PolicyTests/**', '.github/workflows/observer-management-site.yml']
+  pull_request:
+    branches: [main]
+    paths: ['src/Observer.Management/**', 'tests/Observer.Management.PolicyTests/**', 'tests/test_rpc_api_keys.py', 'infra/rpc-tls/**', 'scripts/pool/**', 'scripts/prove-rpc-api-keys.py', '.github/workflows/observer-management-site.yml']
   workflow_dispatch:
     inputs:
       network:
@@ -19,6 +22,11 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 -m unittest discover -s tests -p 'test_*.py'
+      - run: python3 scripts/prove-rpc-api-keys.py
       - run: dotnet run --project tests/Observer.Management.PolicyTests -c Release
       - run: docker build --platform linux/amd64 -t observer-management:build src/Observer.Management
       - run: docker save observer-management:build | gzip > management-image.tar.gz
@@ -57,6 +65,7 @@ jobs:
           RG: ${{ vars.MANAGEMENT_RESOURCE_GROUP }}
           NETWORK: ${{ matrix.network }}
           OBSERVER_RG: ${{ vars.OBSERVER_RESOURCE_GROUP }}
+          KEY_VAULT: ${{ vars.OBSERVER_RPC_KEY_VAULT }}
           PUBLIC_LB: ${{ vars.OBSERVER_PUBLIC_LOAD_BALANCER }}
           LB: ${{ vars.OBSERVER_LOAD_BALANCER }}
           RPC: ${{ vars.OBSERVER_REFERENCE_RPC }}
@@ -80,6 +89,8 @@ jobs:
           docker push "$image"
           pinned=$(docker image inspect "$image" --format '{{index .RepoDigests 0}}')
           test "${pinned%@*}" = "$server/observer-management/$NETWORK"
+          extra=()
+          if [ -n "$KEY_VAULT" ]; then extra+=("RpcKeys__Vault=$KEY_VAULT"); fi
           az containerapp update -g "$RG" -n "$APP" --container-name management --image "$pinned" --output none --set-env-vars \
             "Fleet__Network=$NETWORK" "Fleet__Subscription=$SUBSCRIPTION" "Fleet__ResourceGroup=$OBSERVER_RG" \
-            "Fleet__LoadBalancer=$LB" "Fleet__PublicLoadBalancer=$PUBLIC_LB" "Fleet__ReferenceRpc=$RPC" "Fleet__ChainId=$CHAIN"
+            "Fleet__LoadBalancer=$LB" "Fleet__PublicLoadBalancer=$PUBLIC_LB" "Fleet__ReferenceRpc=$RPC" "Fleet__ChainId=$CHAIN" "${extra[@]}"

@@ -1,10 +1,12 @@
 // Separate controller VM: no observer resources are declared here.
 param location string = 'centralus'
 param name string = 'adiri-observer-runner'
+@allowed(['adiri', 'mainnet'])
+param network string = 'adiri'
 param subnetId string
 param sshPublicKey string
 param customData string
-var tags = { purpose: 'oprail-observer-runner', network: 'adiri' }
+var tags = { purpose: 'oprail-observer-runner', network: network }
 resource nsg 'Microsoft.Network/networkSecurityGroups@2024-05-01' = {
   name: '${name}-nsg'
   location: location

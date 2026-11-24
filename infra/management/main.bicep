@@ -21,6 +21,7 @@ param registryServer string
 param registryPullIdentityId string
 @description('Fully qualified management image, preferably pinned by digest.')
 param image string
+param rpcKeyVault string = ''
 param githubRepository string = 'SkunkWyrx/telcoin-network-cli'
 
 var tags = { purpose: 'oprail-observer-management', network: network }
@@ -43,7 +44,7 @@ resource app 'Microsoft.App/containerApps@2025-07-01' = {
   location: location
   tags: tags
   identity: {
-    type: 'UserAssigned'
+    type: 'SystemAssigned, UserAssigned'
     userAssignedIdentities: {
       '${registryPullIdentityId}': {}
     }
@@ -80,6 +81,7 @@ resource app 'Microsoft.App/containerApps@2025-07-01' = {
             { name: 'Entra__ClientId', value: clientId }
             { name: 'Entra__AllowedObjectId', value: allowedObjectId }
             { name: 'Entra__ClientSecret', secretRef: 'entra-client-secret' }
+            { name: 'RpcKeys__Vault', value: rpcKeyVault }
             { name: 'Fleet__Network', value: network }
             { name: 'Fleet__Subscription', value: subscriptionId }
             { name: 'Fleet__ResourceGroup', value: observerResourceGroup }
