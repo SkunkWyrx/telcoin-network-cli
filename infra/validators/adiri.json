@@ -50,7 +50,14 @@
     "management_access": "AzureRunCommand",
     "ssh_source_cidrs": [],
     "advertised_transaction_rpc_url": "",
-    "p2p_source_cidrs": []
+    "p2p_source_cidrs": [
+      "35.203.41.59/32",
+      "34.105.191.161/32",
+      "34.102.122.126/32",
+      "34.141.203.172/32",
+      "34.40.242.29/32",
+      "104.43.128.43/32"
+    ]
   },
   "storage": {
     "datadir": "/var/lib/telcoin",

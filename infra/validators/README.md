@@ -180,3 +180,46 @@ Requirements and installer references:
 - https://run.telcoin.network/testnet-node-requirements.pdf
 - https://run.telcoin.network/mainnet-node-requirements.pdf
 - https://run.telcoin.network/mno-node-guide.pdf
+
+## Adiri peer allowlist
+
+The Adiri profile permits inbound UDP 49590 and 49594 only from these /32 sources:
+
+| Peer | Public IPv4 |
+| --- | --- |
+| Upstream bootstrap 1 | 35.203.41.59 |
+| Upstream bootstrap 2 | 34.105.191.161 |
+| Upstream bootstrap 3 | 34.102.122.126 |
+| Upstream bootstrap 4 | 34.141.203.172 |
+| Upstream bootstrap 5 | 34.40.242.29 |
+| OpRail Adiri observer | 104.43.128.43 |
+
+Upstream source: [bootstrap_servers.yaml at commit 55e0c10](https://github.com/Telcoin-Association/telcoin-network/blob/55e0c10ad2147d3e7da40f58e092b47bebfc5485/chain-configs/testnet/bootstrap_servers.yaml), checked November 24, 2026.
+The observer address was checked against its static Azure public IP on that date.
+Per the team's current Adiri guidance these bootstrap nodes also represent the
+validator set; bootstrap membership itself does not confer committee membership.
+This is a reviewed snapshot, not a dynamic committee feed. Refresh the list when
+peer membership/IPs change, and after replacing an OpRail observer. Do not reuse
+it for mainnet. New observers must be explicitly added before they can dial this
+validator. These restrictions apply to the validator, not to public observer P2P.
+
+The NSG allows arbitrary source ports from these IPs to the two destination P2P
+ports, then denies other inbound traffic (except explicitly configured management).
+This preserves QUIC peers that use ephemeral source ports. RPC and metrics stay
+loopback-only. Apply a revised list to an existing validator without a restart:
+
+```bash
+python3 scripts/validators/deploy.py --network adiri --phase network --apply
+```
+
+Provisioning uses the same list for a new validator. No validator resources or live
+observer firewall rules are changed by editing this profile.
+
+This is an **inbound** allowlist. Azure's default outbound rules remain enabled;
+a node may still initiate connections to other discovered peers. Enforcing a
+bidirectional peer-only policy requires additional outbound rules and a reviewed
+list of operational exceptions (DNS, clock synchronization, Azure VM agent and
+identity, Key Vault, package/container downloads, and the reference/sync RPC).
+Do not deploy a blanket outbound deny using only the six peer IPs: it would break
+those services. NSGs are stateful, so replies to an allowed connection do not need
+an extra rule permitting unsolicited inbound traffic.

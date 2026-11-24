@@ -144,3 +144,13 @@ class ValidatorDeploymentTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'another chain'):main()
             network.assert_not_called()
             self.assertFalse(any('run-command' in call.args for call in azure.call_args_list))
+
+
+    def test_adiri_inbound_peers_are_exact_hosts_and_mainnet_is_independent(self):
+        expected={'35.203.41.59/32','34.105.191.161/32','34.102.122.126/32',
+                  '34.141.203.172/32','34.40.242.29/32','104.43.128.43/32'}
+        self.assertEqual(set(self.profile()['networking']['p2p_source_cidrs']),expected)
+        self.assertEqual(self.profile('mainnet')['networking']['p2p_source_cidrs'],[])
+        values=parameters(self.profile(),'ssh-ed25519 '+base64.b64encode(b'public-test-key').decode(),
+                          '11111111-1111-1111-1111-111111111111')['parameters']
+        self.assertEqual(set(values['p2pSources']['value']),expected)
