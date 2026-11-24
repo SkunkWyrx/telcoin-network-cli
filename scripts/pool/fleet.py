@@ -480,6 +480,8 @@ sync
             + ' -verify_hostname ' + config['hostname'] + ' -verify_return_error </dev/null >/dev/null',
         ])
         self.ssh(node, '\n'.join(commands) + '\n')
+        if config.get('api_keys'):
+            self.configure_api_keys(node)
         for name, priority, source, address, port in (
             ('Observer-Public-HTTPS', '118', 'Internet', frontend + '/32', '443'),
             ('Observer-Public-Proxy-Probe', '119', 'AzureLoadBalancer', backend + '/32', '19091'),
@@ -491,6 +493,64 @@ sync
         self.az('network', 'nic', 'ip-config', 'address-pool', 'add', '-g', rg, '--nic-name', nic['name'],
                 '--ip-config-name', ipconfig['name'], '--lb-name', config['load_balancer'], '--address-pool', 'observers')
         print('Added verified HTTPS proxy to public backend pool:', node['name'])
+
+    def configure_api_keys(self, node):
+        """Update only proxy policy; never restart an observer or copy its databases."""
+        import importlib.util
+        config = self.c['public_rpc']
+        keys = config['api_keys']
+        spec = importlib.util.spec_from_file_location('rpc_key_sync', ROOT / 'infra/rpc-tls/api-key-sync.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        limits = module.policy(keys)
+        if any(not re.fullmatch(r'[a-z0-9.-]+', name) for name in [config['hostname'], *config.get('aliases', [])]):
+            raise ValueError('Invalid public hostname')
+        if not re.fullmatch(r'[a-z0-9-]{3,24}', keys['vault']):
+            raise ValueError('Invalid API key vault')
+        if not self.apply:
+            print('Configure RPC API key tiers:', node['name'])
+            return
+        vm = self.vm(node)
+        vault = self.az('keyvault', 'show', '-g', self.c['resource_group'], '-n', keys['vault'])
+        if ((vault.get('tags') or {}).get('purpose') != 'oprail-rpc-api-keys' or
+                (vault.get('tags') or {}).get('network') != self.c['network']):
+            raise ValueError('Unexpected API key vault scope')
+        roles = self.az('role', 'assignment', 'list', '--scope', vault['id'], '--all')
+        if not any(r['principalId'] == vm['identity']['principalId'] and
+                   r['roleDefinitionName'] == 'Key Vault Secrets User' and r['scope'].lower() == vault['id'].lower() for r in roles):
+            self.az('role', 'assignment', 'create', '--assignee-object-id', vm['identity']['principalId'],
+                    '--assignee-principal-type', 'ServicePrincipal', '--role', 'Key Vault Secrets User', '--scope', vault['id'])
+        nic = self.az('network', 'nic', 'show', '--ids', vm['networkProfile']['networkInterfaces'][0]['id'])
+        backend = str(ipaddress.IPv4Address(next(i for i in nic['ipConfigurations'] if i['name'] == 'primary')['privateIPAddress']))
+        replacements = {'@FRONTEND_IP@': str(ipaddress.IPv4Address(config['frontend'])),
+                        '@BACKEND_IP@': backend, '@HOSTNAME@': ' '.join([config['hostname'], *config.get('aliases', [])])}
+        for tier in ('anonymous', 'partner', 'internal', 'backend'):
+            replacements['@' + tier.upper() + '_BURST@'] = str(limits[tier]['burst'])
+        content = (ROOT / 'infra/rpc-tls/nginx-api-keys.conf.in').read_text()
+        for tag, value in replacements.items():
+            content = content.replace(tag, value)
+        commands = ['umask 077', 'install -d -m 0700 /etc/telcoin/rpc-tls']
+        for source, destination in [
+            ('api-key-sync.py', '/etc/telcoin/api-key-sync.py'),
+            ('oprail-rpc-key-sync.service', '/etc/systemd/system/oprail-rpc-key-sync.service'),
+            ('oprail-rpc-key-sync.timer', '/etc/systemd/system/oprail-rpc-key-sync.timer')]:
+            commands.append('printf %s ' + shlex.quote((ROOT / 'infra/rpc-tls' / source).read_text()) + ' > ' + destination)
+        commands += ['printf %s ' + shlex.quote(json.dumps(keys)) + ' > /etc/telcoin/api-keys.json',
+                     'for attempt in $(seq 1 24); do if python3 /etc/telcoin/api-key-sync.py; then break; fi; '
+                     'if [ "$attempt" = 24 ]; then exit 1; fi; sleep 10; done',
+                     'cp -p /etc/telcoin/rpc-tls/nginx.conf /etc/telcoin/rpc-tls/nginx.conf.before-api-keys 2>/dev/null || true',
+                     'printf %s ' + shlex.quote(content) + ' > /etc/telcoin/rpc-tls/nginx.conf.next',
+                     'mv /etc/telcoin/rpc-tls/nginx.conf.next /etc/telcoin/rpc-tls/nginx.conf',
+                     'if systemctl is-active --quiet telcoin-rpc-tls; then '
+                     'if ! docker exec telcoin-rpc-tls nginx -t -c /rpc-tls/nginx.conf >/dev/null 2>&1 || ! systemctl reload telcoin-rpc-tls; then '
+                     'cp -p /etc/telcoin/rpc-tls/nginx.conf.before-api-keys /etc/telcoin/rpc-tls/nginx.conf.next; '
+                     'mv /etc/telcoin/rpc-tls/nginx.conf.next /etc/telcoin/rpc-tls/nginx.conf; '
+                     'systemctl reload telcoin-rpc-tls || true; '
+                     'echo "Proxy policy validation failed; original configuration restored" >&2; exit 1; fi; '
+                     'fi',
+                     'systemctl daemon-reload', 'systemctl enable --now oprail-rpc-key-sync.timer']
+        self.ssh(node, '\n'.join(commands) + '\n')
+        print('RPC API key policy installed:', node['name'])
 
     def replace_fresh(self, image, template=None):
         from replacement import replace_fresh

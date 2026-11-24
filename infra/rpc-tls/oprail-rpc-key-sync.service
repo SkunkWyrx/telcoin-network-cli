@@ -1,0 +1,10 @@
+[Unit]
+Description=Synchronize RPC API key rate-limit policy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /etc/telcoin/api-key-sync.py
+UMask=0077
+TimeoutStartSec=90s

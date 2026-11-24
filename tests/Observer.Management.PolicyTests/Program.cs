@@ -65,3 +65,4 @@ Check(!Operation.Valid(new("fresh-ref", "main")), "Fresh branch rejects short re
 Check(!Operation.Valid(new("fresh-ref", "refs/tags/v0.17.0-adiri")), "Fresh branch rejects tags");
 Check(!Operation.Valid(new("fresh-ref", "refs/heads/main\n")), "Fresh branch rejects trailing newline");
 Console.WriteLine("4 fresh-branch operation checks passed.");
+await RpcApiKeyTests.Run();

@@ -9,6 +9,12 @@ using Microsoft.AspNetCore.Antiforgery;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddHttpClient("remote", c => c.Timeout = TimeSpan.FromSeconds(15));
+builder.Services.AddSingleton<RpcApiKeys>(services => {
+    var vault = builder.Configuration["RpcKeys:Vault"];
+    if (string.IsNullOrEmpty(vault)) return null!;
+    var client = services.GetRequiredService<IHttpClientFactory>().CreateClient("remote");
+    return new RpcApiKeys(client, vault, () => RpcApiKeys.IdentityToken(client));
+});
 builder.Services.AddAntiforgery(o => o.HeaderName = "X-CSRF-TOKEN");
 builder.Services.AddAuthentication(o => { o.DefaultScheme = "Cookies"; o.DefaultChallengeScheme = "Microsoft"; })
     .AddCookie("Cookies", o => { o.Cookie.SecurePolicy = CookieSecurePolicy.Always; o.ExpireTimeSpan = TimeSpan.FromHours(1); })
@@ -59,6 +65,7 @@ secured.MapGet("/api/session", (HttpContext c, IAntiforgery csrf) => Results.Ok(
     operationsEnabled = builder.Configuration.GetValue<bool>("Operations:Enabled"),
     csrf = csrf.GetAndStoreTokens(c).RequestToken
 }));
+RpcKeyEndpoints.Map(secured, builder.Configuration);
 FleetEndpoints.MapStatus(secured, c => ((Remote)c.Items["remote"]!).Status());
 secured.MapPost("/api/operations", async (HttpContext c, IAntiforgery csrf, Operation operation) => {
     await csrf.ValidateRequestAsync(c);

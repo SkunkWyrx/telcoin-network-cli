@@ -51,7 +51,28 @@
     "issuer": "telcoin-observer-vm-1",
     "vault": "oprail-adiri-rpc-tls",
     "secret": "adiri-rpc-cert-bundle",
-    "proxy_image": "nginx@sha256:583b7f2fce1cdb8da5ad5c39ebd3c33b98b87d493190e548bdee1fa8c619c311"
+    "proxy_image": "nginx@sha256:583b7f2fce1cdb8da5ad5c39ebd3c33b98b87d493190e548bdee1fa8c619c311",
+    "api_keys": {
+      "vault": "oprail-adiri-rpc-keys",
+      "limits": {
+        "anonymous": {
+          "rate": 30,
+          "burst": 60
+        },
+        "partner": {
+          "rate": 100,
+          "burst": 200
+        },
+        "internal": {
+          "rate": 300,
+          "burst": 600
+        },
+        "backend": {
+          "rate": 500,
+          "burst": 400
+        }
+      }
+    }
   },
   "storage": {
     "execution_size_gb": 50,

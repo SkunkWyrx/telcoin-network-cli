@@ -15,7 +15,7 @@ from policy import pinned_image
 
 
 def validate(operation, argument):
-    patterns = {'check': r'cluster', 'add': r'[1-9][0-9]?', 'remove': r'[A-Za-z0-9][A-Za-z0-9-]{0,63}',
+    patterns = {'rpc-keys-sync': r'cluster', 'check': r'cluster', 'add': r'[1-9][0-9]?', 'remove': r'[A-Za-z0-9][A-Za-z0-9-]{0,63}',
                 'snapshot': r'[A-Za-z0-9][A-Za-z0-9-]{0,63}',
                 'build': r'refs/(tags|heads)/[A-Za-z0-9._/-]+',
                 'fresh-ref': r'refs/heads/[A-Za-z0-9][A-Za-z0-9._/-]*',
@@ -86,7 +86,10 @@ def run(fleet, operation, argument, env_root=Path('/etc/oprail-observers')):
             step['stage'] = 'completed'
             fleet.save('replacement.json', replacement)
     actual = reconcile(fleet)
-    if operation == 'check':
+    if operation == 'rpc-keys-sync':
+        for node in fleet.c['nodes']:
+            fleet.configure_api_keys(node)
+    elif operation == 'check':
         for node in fleet.c['nodes']:
             fleet.vm(node)
             if not fleet.synced(node):
@@ -182,6 +185,10 @@ def main():
     defaults = ROOT / 'infra/pool' / (config['network'] + '.json')
     if 'storage' not in config and defaults.is_file():
         config['storage'] = json.loads(defaults.read_text()).get('storage', {})
+    if defaults.is_file() and config.get('public_rpc') and 'api_keys' not in config['public_rpc']:
+        keys = json.loads(defaults.read_text()).get('public_rpc', {}).get('api_keys')
+        if keys:
+            config['public_rpc']['api_keys'] = keys
     if args.expected_network and config['network'] != args.expected_network:
         raise ValueError('Controller profile does not match the requested network')
     fleet = Fleet(config, apply=True)
