@@ -515,7 +515,7 @@ sync
         if ((vault.get('tags') or {}).get('purpose') != 'oprail-rpc-api-keys' or
                 (vault.get('tags') or {}).get('network') != self.c['network']):
             raise ValueError('Unexpected API key vault scope')
-        roles = self.az('role', 'assignment', 'list', '--scope', vault['id'], '--all')
+        roles = self.az('role', 'assignment', 'list', '--scope', vault['id'], '--fill-principal-name', 'false')
         if not any(r['principalId'] == vm['identity']['principalId'] and
                    r['roleDefinitionName'] == 'Key Vault Secrets User' and r['scope'].lower() == vault['id'].lower() for r in roles):
             self.az('role', 'assignment', 'create', '--assignee-object-id', vm['identity']['principalId'],

@@ -114,6 +114,10 @@ class ProxyDeploymentTests(unittest.TestCase):
         self.assertNotIn('docker stop', script)
         subprocess.run(['bash', '-n'], input=script, text=True, check=True)
         self.assertFalse(any('delete' in call.args for call in f.az.call_args_list))
+        scoped = next(call.args for call in f.az.call_args_list if call.args[:3] == ('role', 'assignment', 'list'))
+        self.assertIn('--scope', scoped)
+        self.assertNotIn('--all', scoped)  # Azure CLI rejects --all combined with --scope.
+        self.assertEqual(scoped[-2:], ('--fill-principal-name', 'false'))
 
 class VaultFetchTests(unittest.TestCase):
     def test_paging_skips_disabled_expired_and_unrelated_secrets(self):
