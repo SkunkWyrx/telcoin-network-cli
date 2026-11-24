@@ -2,9 +2,7 @@
 
 The Adiri and mainnet profiles define independent one-node deployments in
 `oprail-validator-adiri` and `oprail-validator-mainnet`. Each has its own network,
-release channel and operations runner/environment names. These profiles describe
-the desired configuration. Provisioning and installer integration are the next
-implementation step.
+release channel and operations runner/environment names. These profiles are consumed by the validator-only deployment command and workflow.
 
 ## Preview locally
 
@@ -26,8 +24,8 @@ release.
 | Setting | Adiri | Mainnet |
 | --- | --- | --- |
 | VM | Standard_D8s_v6 | Standard_D16s_v6 |
-| Execution disk | 100 GiB, 12,000 IOPS, 240 MB/s | 100 GiB, 20,000 IOPS, 300 MB/s |
-| Consensus disk | 100 GiB, 3,000 IOPS, 125 MB/s | 100 GiB, 3,000 IOPS, 125 MB/s |
+| Execution disk | 50 GiB, 12,000 IOPS, 240 MB/s | 100 GiB, 20,000 IOPS, 300 MB/s |
+| Consensus disk | 50 GiB, 3,000 IOPS, 125 MB/s | 100 GiB, 3,000 IOPS, 125 MB/s |
 
 Both use Premium SSD v2. Disk capacities and performance are independent profile
 settings. Small initial disks are intentional. Preview another capacity with:
@@ -54,7 +52,7 @@ at its root. Data disks are retained when the VM is removed.
 ## Access and identity
 
 RPC and metrics bind to loopback. The public IP accepts the two P2P UDP ports;
-management uses Azure Run Command. SSH sources start empty. There is no public
+management uses Azure Run Command. SSH and P2P source lists start empty (inbound closed). Configure approved P2P sources before finalization. There is no public
 RPC load balancer in these profiles. The advertised transaction RPC URL is a
 separate future gateway setting required for validator onboarding.
 
@@ -67,13 +65,115 @@ observe the epoch restart rules. Each network has its own backend operations
 identity. Staking and activation remain explicit wallet operations. Observer
 fresh-key replacement operations do not apply to registered validator identities.
 
-## Implementation sequence
+## Deployment and identity preparation
 
-1. Provision the VM, VNet, P2P IP/NSG and the two configurable disks from a profile.
-2. Install the verified upstream scripts and automate keygen and finalize, with
-   an encrypted identity backup between phases.
-3. Add private health/status reporting and validator-specific upgrade operations.
-4. Complete the transaction gateway and on-chain onboarding inputs.
+The workflow is `.github/workflows/validator-deployment.yml`. It accepts either
+`adiri` or `mainnet`; there are no shared VMs, disks, vaults, keys or resource groups.
+It uses hosted runners and Azure Run Command rather than allocating another runner
+VM or opening SSH. Both deploy one validator initially. The mainnet start is gated
+separately from preparing its infrastructure and public identity.
+
+Local plans never contact Azure:
+
+```bash
+python3 scripts/validators/deploy.py --network adiri
+python3 scripts/validators/deploy.py --network mainnet
+```
+
+Provision infrastructure (billable resources; explicitly requires `--apply`):
+
+```bash
+python3 scripts/validators/deploy.py --network adiri --phase provision --apply \
+  --ssh-public-key-file ~/.ssh/id_ed25519.pub
+python3 scripts/validators/deploy.py --network mainnet --phase provision --apply \
+  --ssh-public-key-file ~/.ssh/id_ed25519.pub
+```
+
+The deployment creates Trusted Launch/vTPM VMs, static IPs, sealed-by-default
+NSGs, separate Premium SSD v2 data disks, and a dedicated passphrase vault. It
+mounts the execution and consensus/static-files layout, enables clock sync, turns
+off swap, and configures the upstream kernel-mitigation preflight requirement.
+The same disk-growth helper used by observers grows each disk by 50 GiB at 75%
+usage. Its VM identity can resize only its own two disks. The API-key/RPC observer
+resources are never part of this template. An existing validator VM is retained;
+provisioning refuses to redeploy it, recreate its keys, or reuse a partial unknown
+resource set. Upgrade/recovery of an existing validator is a separate operation.
+
+After setting each profile's confirmed execution address, signed release tag,
+approved P2P source CIDRs, and any transaction gateway URL, store a strong BLS
+passphrase through a hidden local prompt (never through GitHub inputs or ARM):
+
+```bash
+python3 scripts/validators/deploy.py --network adiri --phase set-passphrase --apply
+```
+
+Use `--network mainnet` for its independent vault. This refuses to replace an
+existing passphrase; password rotation must preserve the validator identity.
+The operator/deployment principal is granted Secrets Officer only on that network's
+new vault. `--operator-principal-id` chooses another key custodian at provisioning;
+otherwise the current Azure identity is used. The VM has Secrets User on its own
+network's vault, and receives no secrets through cloud-init or Run Command.
+
+Prepare and export the public handoff, without starting a node or staking:
+
+```bash
+python3 scripts/validators/deploy.py --network adiri --phase prepare --apply \
+  --release-tag vX.Y.Z-adiri --execution-address 0xCONFIRMED_ADDRESS
+python3 scripts/validators/deploy.py --network adiri --phase export --apply
+```
+
+For mainnet select `--network mainnet` and a mainnet release `vX.Y.Z`. Preparation
+installs the official verified script release and calls its JSON `keygen` phase.
+The passphrase travels directly from the VM's vault identity to the installer's
+stdin; upstream stores the running credential with systemd host+TPM encryption.
+No unencrypted BLS keystore is accepted. Public export mounts **only**
+`node-info.yaml` read-only into the network-specific pinned image; private key
+files are not mounted. It writes `.validator-state/<network>/onboarding.json`
+(ignored by Git) with the BLS public key, proof, execution address, IP, P2P
+addresses and release digest. Only this public artifact is uploaded by CI.
+
+Grant must supply the precise staking identity, including whether it is the Safe
+itself. A proof bound to its owner's ECDSA address is not interchangeable. Keep the
+encrypted key backup and recoverable vault passphrase secure. The upstream mainnet
+release/pin gates stay in force: this command does not bypass them while the image
+is pending. Infrastructure can be reserved independently; key preparation waits
+for an approved, supported release.
+
+After backing up the encrypted identity and obtaining the correct network
+configuration/reference RPC, finalize explicitly:
+
+```bash
+python3 scripts/validators/deploy.py --network adiri --phase finalize --apply \
+  --release-tag vX.Y.Z-adiri --execution-address 0xCONFIRMED_ADDRESS \
+  --acknowledge-key-backup
+```
+
+The reference chain ID must match before starting. In particular, do not use the
+planned mainnet RPC while it still serves Adiri; set the internal mainnet RPC
+provided by the team. Finalization applies only approved P2P sources to the
+validator NSG, requires all data mounts on every service start, and runs upstream
+`finalize`. It does not stake or activate on-chain. Existing validator services are
+refused rather than restarted. Repeated preparation preserves the same keys;
+identity, IP or release mismatches require coordinated recovery. `--phase network`
+updates the peer allowlist without a restart. `--phase status` reads the durable
+preparation state.
+
+For GitHub deployments configure **both** environments with required reviewers:
+`validator-operations-adiri` and `validator-operations-mainnet`. Give each a separate
+Azure OIDC identity scoped to its validator resource group, with permission to
+provision its resources, custom disk role, and scoped role assignments. Precreate
+the empty, tagged groups when the identity cannot create groups. Set environment
+variables `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`,
+`VALIDATOR_SSH_PUBLIC_KEY` and `VALIDATOR_KEY_CUSTODIAN_OBJECT_ID`. The custodian
+object ID should be the operator who will set/recover the vault passphrase, not
+necessarily the deployment identity. Then set repository variable
+`VALIDATOR_DEPLOYMENT_ENABLED=true`. Mainnet finalization additionally requires
+repository variable `VALIDATOR_MAINNET_ENABLED=true`; preparing resources does not.
+The passphrase-setting step runs locally with the custodian's Azure login.
+
+Changes here do not create Azure resources until an explicit deployment. Mainnet
+and Adiri key material must never be copied between deployments. There is no
+validator fresh-key/observer snapshot replacement path.
 
 Requirements and installer references:
 

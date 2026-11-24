@@ -49,7 +49,8 @@
     "public_tcp_ports": [],
     "management_access": "AzureRunCommand",
     "ssh_source_cidrs": [],
-    "advertised_transaction_rpc_url": ""
+    "advertised_transaction_rpc_url": "",
+    "p2p_source_cidrs": []
   },
   "storage": {
     "datadir": "/var/lib/telcoin",
@@ -78,12 +79,19 @@
       "/var/lib/telcoin/consensus-db",
       "/var/lib/telcoin/static_files"
     ],
-    "delete_with_vm": false
+    "delete_with_vm": false,
+    "auto_grow": {
+      "enabled": true,
+      "threshold_percent": 75,
+      "increment_gb": 50
+    }
   },
   "identity": {
     "execution_address": "",
     "preserve_registered_keys": true,
-    "credential_storage": "systemd-host+tpm2"
+    "credential_storage": "systemd-host+tpm2",
+    "passphrase_vault": "oprail-val-mainnet-keys",
+    "passphrase_secret": "validator-1-bls-passphrase"
   },
   "operations": {
     "runner_label": "validator-operations-mainnet",
@@ -93,5 +101,6 @@
     "preserve_consensus_signing_state": true,
     "quorum_check_before_restart": true,
     "epoch_aware_restart": true
-  }
+  },
+  "dns_label": "oprail-validator-mainnet-1"
 }

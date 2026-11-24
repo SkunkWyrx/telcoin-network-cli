@@ -26,3 +26,6 @@ __pycache__/
 # Per-user editor state and generated Aspire cache
 .vscode/
 *.lscache
+
+# Local validator public onboarding exports and controller state
+.validator-state/
