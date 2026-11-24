@@ -57,6 +57,7 @@ jobs:
           RG: ${{ vars.MANAGEMENT_RESOURCE_GROUP }}
           NETWORK: ${{ matrix.network }}
           OBSERVER_RG: ${{ vars.OBSERVER_RESOURCE_GROUP }}
+          KEY_VAULT: ${{ vars.OBSERVER_RPC_KEY_VAULT }}
           PUBLIC_LB: ${{ vars.OBSERVER_PUBLIC_LOAD_BALANCER }}
           LB: ${{ vars.OBSERVER_LOAD_BALANCER }}
           RPC: ${{ vars.OBSERVER_REFERENCE_RPC }}
@@ -80,6 +81,8 @@ jobs:
           docker push "$image"
           pinned=$(docker image inspect "$image" --format '{{index .RepoDigests 0}}')
           test "${pinned%@*}" = "$server/observer-management/$NETWORK"
+          extra=()
+          if [ -n "$KEY_VAULT" ]; then extra+=("RpcKeys__Vault=$KEY_VAULT"); fi
           az containerapp update -g "$RG" -n "$APP" --container-name management --image "$pinned" --output none --set-env-vars \
             "Fleet__Network=$NETWORK" "Fleet__Subscription=$SUBSCRIPTION" "Fleet__ResourceGroup=$OBSERVER_RG" \
-            "Fleet__LoadBalancer=$LB" "Fleet__PublicLoadBalancer=$PUBLIC_LB" "Fleet__ReferenceRpc=$RPC" "Fleet__ChainId=$CHAIN"
+            "Fleet__LoadBalancer=$LB" "Fleet__PublicLoadBalancer=$PUBLIC_LB" "Fleet__ReferenceRpc=$RPC" "Fleet__ChainId=$CHAIN" "${extra[@]}"

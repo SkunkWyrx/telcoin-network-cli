@@ -232,3 +232,89 @@ publish an incident metric. Stateful Azure Monitor alerts notify on activation
 and resolution. A reference failure omits the lag metric. Alert evaluation runs
 every minute over a five-minute window, so delivery and recovery include Azure
 Monitor processing time. The timer does not send an email on every sample.
+
+### Named RPC API keys
+
+The optional `public_rpc.api_keys` configuration adds tiers to the existing HTTPS
+proxy. Anonymous clients continue to use the public RPC without a key. Supply a
+key only in the `X-API-Key` header; URL/query keys are not supported. Keys are
+intended for server-side applications, where they can be kept private.
+
+| Tier | Sustained requests/s | Burst | Counter |
+|---|---:|---:|---|
+| Anonymous | 30 | 60 | Client IP |
+| Partner | 100 | 200 | Key ID |
+| Internal | 300 | 600 | Key ID |
+| All traffic | 500 | 400 | Observer backend |
+
+All limits apply **per observer**, including the combined cap. They count HTTP
+requests, so one JSON-RPC batch counts as one request. Multiple keys have separate
+budgets; sharing one key also shares its budget. The backend cap can limit any
+tier when combined traffic is high. Legacy deployments without API-key settings
+retain the original anonymous 30/s and backend 200/s configuration.
+
+The management panel's **RPC API keys** section creates a named partner/internal
+key, with optional expiration, and displays its random 256-bit value once. Copy
+it before hiding it or leaving the page. There is no endpoint to retrieve an
+existing key; create a replacement and revoke the old key when rotating. Key
+listing exposes metadata only. Mutations use the existing owner-only Microsoft
+sign-in, Azure authorization checks, and CSRF protection. Key responses are
+`Cache-Control: no-store`.
+
+Each key is an independent secret in a dedicated vault, separate from TLS keys.
+The app's system-assigned identity has Secrets Officer on that vault. Observers
+have Secrets User; the runner can delegate only that reader role at this vault.
+API key values never enter GitHub inputs, operation history, logs, or tracked
+configuration. The NGINX map/cache on a VM necessarily contains credentials and
+is root-readable only. NGINX strips the header before forwarding to the observer.
+
+Observers refresh the vault about every minute and apply a tested graceful proxy
+reload. No observer restart or database change is needed. Expiration and revocation
+normally propagate within one refresh cycle plus request time; in-flight requests
+are not canceled. Invalid/expired/revoked keys return HTTP 401 rather than falling
+back to the anonymous tier. Rate violations return HTTP 429. During a vault outage,
+the refresh task uses only a successful cache no older than five minutes and still
+filters expired keys. Once the cache is stale, it removes keyed access while
+retaining anonymous access. This depends on the refresh timer continuing to run;
+check its service journal when troubleshooting. Updates validate NGINX configuration
+and restore the prior file on a validation/reload failure.
+
+Deployment order for Adiri:
+
+1. Prepare the dedicated vault, management identity, and current observer readers:
+   `python3 scripts/configure-rpc-api-keys.py --network adiri --apply`.
+   Without `--apply`, it prints a plan. It preserves existing image-pull identities,
+   sets `RpcKeys__Vault`, and records `OBSERVER_RPC_KEY_VAULT` in the website's
+   GitHub environment. It does not restart observers.
+2. Merge the tested change and approve the management-site release. This adds the
+   key-management UI; it does not modify nodes.
+3. Dispatch **Observer management operation** with network `adiri`, operation
+   `rpc-keys-sync`, and argument `cluster`, and approve the environment gate. It
+   updates proxy policy on existing members, including the TLS issuer, with a
+   graceful reload. New observer provisioning inherits the same policy.
+4. Create a key in the management panel and allow a refresh cycle before using it.
+
+Change rates/bursts in `infra/pool/adiri.json`, rerun the preparation script to
+update the panel's displayed policy, and run `rpc-keys-sync` to apply the updated
+proxy policy. An explicit runner profile's `public_rpc.api_keys` overrides the
+repository defaults. Never add actual key values to the profile.
+
+Verification:
+
+```bash
+python3 -m unittest discover -s tests -p 'test_*.py'
+dotnet run --project tests/Observer.Management.PolicyTests
+python3 scripts/prove-rpc-api-keys.py
+```
+
+The final command uses temporary local containers and a mock RPC backend, never
+the public RPC. It checks unknown/expired/revoked keys, relative tier budgets,
+independent keys, stripping the upstream header, reload revocation, and the shared
+backend cap. It removes its containers and network afterward.
+
+VM diagnostics (do not print `api-keys.conf` or `api-keys-cache.json`):
+
+```bash
+sudo systemctl status oprail-rpc-key-sync.timer
+sudo journalctl -u oprail-rpc-key-sync.service
+```

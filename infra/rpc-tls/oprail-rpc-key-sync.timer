@@ -1,0 +1,10 @@
+[Unit]
+Description=Refresh RPC API keys each minute
+
+[Timer]
+OnBootSec=30s
+OnUnitInactiveSec=60s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
