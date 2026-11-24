@@ -292,7 +292,11 @@ Deployment order for Adiri:
    `rpc-keys-sync`, and argument `cluster`, and approve the environment gate. It
    updates proxy policy on existing members, including the TLS issuer, with a
    graceful reload. New observer provisioning inherits the same policy.
-4. Create a key in the management panel and allow a refresh cycle before using it.
+4. Only after proxy rollout and verification succeed, set the management app's
+   `RpcKeys__ProxyEnabled=true` setting. Until then, the page explicitly reports
+   **Not activated**, and the API rejects key creation. A website-only deployment
+   therefore makes no claims about changing the live observer or its limits.
+5. Create a key in the management panel and allow a refresh cycle before using it.
 
 Change rates/bursts in `infra/pool/adiri.json`, rerun the preparation script to
 update the panel's displayed policy, and run `rpc-keys-sync` to apply the updated

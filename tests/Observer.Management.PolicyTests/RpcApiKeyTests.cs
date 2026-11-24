@@ -57,6 +57,7 @@ static class RpcApiKeyTests {
         builder.WebHost.UseSetting("urls", "http://127.0.0.1:0");
         builder.Services.AddAntiforgery(o => o.HeaderName = "X-CSRF-TOKEN");
         builder.Services.AddSingleton(store);
+        builder.Configuration["RpcKeys:ProxyEnabled"] = "true";
         await using var app = builder.Build();
         RpcKeyEndpoints.Map(app.MapGroup(""), builder.Configuration);
         app.MapGet("/test-csrf", (HttpContext c, IAntiforgery csrf) => Results.Ok(new { token = csrf.GetAndStoreTokens(c).RequestToken }));
@@ -73,6 +74,16 @@ static class RpcApiKeyTests {
             request.Headers.Add("X-CSRF-TOKEN", csrf);
             using var response = await http.SendAsync(request);
             Check(response.IsSuccessStatusCode && response.Headers.CacheControl?.NoStore == true, "Create endpoint returns uncached one-time credential");
+            builder.Configuration["RpcKeys:ProxyEnabled"] = "false";
+            var before = vault.Requests.Count(r => r.Method == "PUT");
+            using var inactiveList = await http.GetAsync("/api/rpc-keys");
+            Check(!JsonNode.Parse(await inactiveList.Content.ReadAsStringAsync())!["active"]!.GetValue<bool>(), "Website-only release reports proxies inactive");
+            using var staged = new HttpRequestMessage(HttpMethod.Post, "/api/rpc-keys") {
+                Content = new StringContent("{\"name\":\"Staged app\",\"tier\":\"partner\"}", System.Text.Encoding.UTF8, "application/json") };
+            staged.Headers.Add("X-CSRF-TOKEN", csrf);
+            using var blocked = await http.SendAsync(staged);
+            Check(blocked.StatusCode == HttpStatusCode.Conflict && vault.Requests.Count(r => r.Method == "PUT") == before,
+                  "Inactive proxies block key creation without writing a secret");
             using var denied = await http.PostAsync("/api/rpc-keys", new StringContent("{\"name\":\"App\",\"tier\":\"partner\"}", System.Text.Encoding.UTF8, "application/json"));
             Check(denied.StatusCode == HttpStatusCode.BadRequest, "Mutation without CSRF denied");
             using var noReveal = await http.GetAsync("/api/rpc-keys/"+id);

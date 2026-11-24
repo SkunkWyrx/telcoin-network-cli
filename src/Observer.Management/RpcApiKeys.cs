@@ -107,7 +107,7 @@ static class RpcKeyEndpoints {
             var keys = c.RequestServices.GetService<RpcApiKeys>();
             c.Response.Headers.CacheControl = "no-store";
             if (keys is null) return Results.Ok(new { configured = false, keys = Array.Empty<object>() });
-            return Results.Ok(new { configured = true, keys = await keys.List(), limits });
+            return Results.Ok(new { configured = true, active = config.GetValue<bool>("RpcKeys:ProxyEnabled"), keys = await keys.List(), limits });
         });
         secured.MapPost("/api/rpc-keys", async (HttpContext c, IAntiforgery csrf, RpcKeyRequest request) => {
             var keys = c.RequestServices.GetService<RpcApiKeys>();
@@ -115,6 +115,8 @@ static class RpcKeyEndpoints {
             try { await csrf.ValidateRequestAsync(c); }
             catch (AntiforgeryValidationException) { return Results.BadRequest(new { error = "Refresh the management page and try again." }); }
             if (keys is null) return Results.Conflict(new { error = "RPC key management is not configured." });
+            if (!config.GetValue<bool>("RpcKeys:ProxyEnabled"))
+                return Results.Conflict(new { error = "API-key tiers are not activated on the RPC proxies. The running observer is unchanged." });
             if (!RpcApiKeys.Valid(request, DateTimeOffset.UtcNow))
                 return Results.BadRequest(new { error = "Use a name of 1–80 letters, digits, spaces, dots, hyphens or underscores, a valid tier, and a future expiration." });
             try {
