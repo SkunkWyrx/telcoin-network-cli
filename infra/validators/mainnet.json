@@ -102,5 +102,10 @@
     "quorum_check_before_restart": true,
     "epoch_aware_restart": true
   },
-  "dns_label": "oprail-validator-mainnet-1"
+  "dns_label": "oprail-validator-mainnet-1",
+  "backup": {
+    "storage_account": "ovmainnetdf82ecfa2640",
+    "source_vm_id": "/subscriptions/8a149d4d-c52a-4432-929e-de754584e269/resourceGroups/oprail-validator-mainnet/providers/Microsoft.Compute/virtualMachines/mainnet-validator-1",
+    "retention_days": 90
+  }
 }

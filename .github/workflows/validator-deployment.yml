@@ -11,7 +11,7 @@ on:
         required: true
       phase:
         type: choice
-        options: [plan, provision, prepare, export, finalize, network, status]
+        options: [plan, provision, prepare, backup, export, finalize, network, status]
         default: plan
       release_tag:
         type: string
@@ -54,6 +54,8 @@ jobs:
       EXECUTION_ADDRESS: ${{ inputs.execution_address }}
       ACK_BACKUP: ${{ inputs.acknowledge_key_backup }}
       SSH_PUBLIC_KEY: ${{ vars.VALIDATOR_SSH_PUBLIC_KEY }}
+      IDENTITY_CERT: ${{ vars.VALIDATOR_IDENTITY_RECOVERY_CERTIFICATE }}
+      PASSPHRASE_CERT: ${{ vars.VALIDATOR_PASSPHRASE_RECOVERY_CERTIFICATE }}
       KEY_CUSTODIAN: ${{ vars.VALIDATOR_KEY_CUSTODIAN_OBJECT_ID }}
     steps:
       - uses: actions/checkout@v4
@@ -74,6 +76,12 @@ jobs:
             test -n "$SSH_PUBLIC_KEY" && test -n "$KEY_CUSTODIAN"
             printf '%s\n' "$SSH_PUBLIC_KEY" > /tmp/validator.pub
             args+=(--ssh-public-key-file /tmp/validator.pub --operator-principal-id "$KEY_CUSTODIAN")
+          fi
+          if [ "$PHASE" = backup ]; then
+            test -n "$IDENTITY_CERT" && test -n "$PASSPHRASE_CERT"
+            printf '%s\n' "$IDENTITY_CERT" > /tmp/identity-recovery.pem
+            printf '%s\n' "$PASSPHRASE_CERT" > /tmp/passphrase-recovery.pem
+            args+=(--identity-certificate /tmp/identity-recovery.pem --passphrase-certificate /tmp/passphrase-recovery.pem)
           fi
           python3 scripts/validators/deploy.py "${args[@]}"
       - uses: actions/upload-artifact@v4

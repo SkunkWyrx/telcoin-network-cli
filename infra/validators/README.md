@@ -139,8 +139,8 @@ release/pin gates stay in force: this command does not bypass them while the ima
 is pending. Infrastructure can be reserved independently; key preparation waits
 for an approved, supported release.
 
-After backing up the encrypted identity and obtaining the correct network
-configuration/reference RPC, finalize explicitly:
+After completing the encrypted backup and signed recovery drill below, and obtaining
+the correct network configuration/reference RPC, finalize explicitly:
 
 ```bash
 python3 scripts/validators/deploy.py --network adiri --phase finalize --apply \
@@ -151,7 +151,7 @@ python3 scripts/validators/deploy.py --network adiri --phase finalize --apply \
 The reference chain ID must match before starting. In particular, do not use the
 planned mainnet RPC while it still serves Adiri; set the internal mainnet RPC
 provided by the team. Finalization applies only approved P2P sources to the
-validator NSG, requires all data mounts on every service start, and runs upstream
+validator NSG, requires a signed recovery receipt matching the current identity and pinned passphrase version, requires all data mounts on every service start, and runs upstream
 `finalize`. It does not stake or activate on-chain. Existing validator services are
 refused rather than restarted. Repeated preparation preserves the same keys;
 identity, IP or release mismatches require coordinated recovery. `--phase network`
@@ -223,3 +223,186 @@ identity, Key Vault, package/container downloads, and the reference/sync RPC).
 Do not deploy a blanket outbound deny using only the six peer IPs: it would break
 those services. NSGs are stateful, so replies to an allowed connection do not need
 an extra rule permitting unsolicited inbound traffic.
+
+## Encrypted identity backup and recovery verification
+
+Before the first `finalize`, complete the recovery drill. `--acknowledge-key-backup`
+alone is no longer sufficient. This feature is for a newly **prepared** validator,
+before its service is installed or it signs consensus. It never backs up a running
+signer or automatically replaces/starts a validator. Existing prepared nodes from
+before this feature have no pinned passphrase version: do not regenerate their
+keys; review and migrate their state explicitly.
+
+### What is protected
+
+* The identity archive contains only `node-keys/bls.kw`, `primary.seed`,
+  `worker.seed`, `node-info.yaml`, installer metadata and deployment configuration.
+  Cleartext BLS keys, unexpected key files and symlinks are rejected. Network seed
+  files are private too, so the entire archive receives additional encryption.
+* The passphrase is put in a **different** encrypted envelope, including its
+  versioned Key Vault reference and matching identity fingerprint. It never goes
+  into the identity archive, an ARM parameter, a GitHub artifact or a command line.
+* Envelopes use OpenSSL CMS AES-256-GCM, with independent RSA-3072-or-larger
+  recipients and OAEP/SHA-256 key wrapping. Two certificates sharing a private key
+  are refused. Keep both private recovery keys encrypted and off the validator,
+  runner and repository, preferably with separate custodians/offline media.
+* Only the public certificates go to the validator. The passphrase remains in its
+  own network's Key Vault; generation pins the exact secret version. Later secret
+  versions cannot silently change the validator's password. Key Vault has 90-day
+  soft deletion and purge protection.
+* Each network gets a dedicated ZRS storage account with separate `identity` and
+  `passphrase` private containers. Shared-key authentication and public blobs are
+  disabled. HTTPS/OAuth, infrastructure encryption, blob versioning, and 90-day
+  blob/container soft deletion and a storage-account deletion lock are enabled. VM and custodian roles are scoped to
+  those containers with read/write, **no delete permissions**. Writes use unique
+  backup IDs and refuse overwrites. This is not immutable WORM storage: privileged
+  Azure administrators can change policy or remove resources. Keep offline copies
+  of both ciphertext envelopes, their index, and the two recovery private keys
+  under an independent custody/recovery policy.
+* This protects backups at rest. Root, Azure Run Command administrators and a
+  compromised live validator can still access the live signing key/passphrase.
+  Restrict those privileges, require MFA/PIM and audit their use. Python cannot
+  guarantee erasure of every in-memory secret copy. RAM scratch is required for
+  decrypted files; use a dedicated patched recovery host with swap disabled,
+  hibernation/core dumps disabled, and no untrusted workloads.
+
+### Create recovery keys once, outside Azure/GitHub
+
+Use OpenSSL 3 on a trusted workstation. These commands prompt for private-key
+passwords; do not put passwords in shell arguments. Use different passwords and
+separate secure custody for the two private keys. A self-signed certificate here
+is a pinned encryption recipient, not a public website/TLS certificate.
+
+```bash
+umask 077
+openssl req -x509 -newkey rsa:3072 -sha256 -days 3650 \
+  -keyout adiri-identity-recovery.key -out adiri-identity-recovery.pem \
+  -subj '/CN=OpRail Adiri identity recovery'
+openssl req -x509 -newkey rsa:3072 -sha256 -days 3650 \
+  -keyout adiri-passphrase-recovery.key -out adiri-passphrase-recovery.pem \
+  -subj '/CN=OpRail Adiri passphrase recovery'
+```
+
+Back up the encrypted `.key` files and their passwords securely and independently.
+Do not lose them: the validator has only their public `.pem` certificates and
+cannot recover these private keys for you. Keep the original certificates for
+historical backups when rotating recipients. Never reuse these recipients across
+Adiri and mainnet. Do not upload private recovery keys to Key Vault, the VM, CI,
+GitHub secrets, the repository or this management site.
+
+### Back up a prepared validator
+
+After `prepare`, run:
+
+```bash
+python3 scripts/validators/deploy.py --network adiri --phase backup --apply \
+  --identity-certificate /secure/public/adiri-identity-recovery.pem \
+  --passphrase-certificate /secure/public/adiri-passphrase-recovery.pem
+```
+
+It obtains the **pinned** passphrase version through the VM identity, encrypts both
+bundles on the VM with scratch files in `/dev/shm`, uploads them, reads them back
+and checks their hashes. Its output contains only a public backup ID and storage
+account, not secret data. Record the backup ID. Download and retain offline copies
+of `<ID>/index.json` and `<ID>/identity.cms` from container `identity`, and
+`<ID>/passphrase.cms` from container `passphrase`, using Azure Storage tools with
+`--auth-mode login`. The Azure account name is `backup.storage_account` in the
+network profile. The BLS passphrase's password-manager copy remains a recommended
+independent recovery route; no plaintext export is produced by these scripts.
+
+For the GitHub `backup` phase, configure public environment variables
+`VALIDATOR_IDENTITY_RECOVERY_CERTIFICATE` and
+`VALIDATOR_PASSPHRASE_RECOVERY_CERTIFICATE` with the corresponding full PEM text.
+Only the public PEM certificates belong there. The recovery drill below runs
+outside GitHub.
+
+### Prove recovery before the first start
+
+Use a dedicated, trusted Linux recovery host as a non-root operator. It needs
+OpenSSL 3, Python 3, Azure CLI, Docker, and a tmpfs directory such as `/dev/shm`.
+Give that operator the narrowly scoped backup permissions configured at
+provisioning. Preload the exact trusted container digest from the backup index;
+verify its official release provenance before use. The script refuses missing
+images rather than fetching code while keys are present. Access to Docker is
+privileged: this must not be a shared build runner or developer host.
+
+```bash
+python3 scripts/validators/backup.py --network adiri --backup-id BACKUP_ID \
+  --identity-certificate /secure/adiri-identity-recovery.pem \
+  --passphrase-certificate /secure/adiri-passphrase-recovery.pem \
+  --identity-private-key /secure/adiri-identity-recovery.key \
+  --passphrase-private-key /secure/adiri-passphrase-recovery.key
+```
+
+The tool downloads ciphertext with the operator's Azure login, asks for the two
+private-key passwords using hidden prompts, decrypts into RAM, checks the archive
+allowlist/digests/network/identity and tests the recovered BLS passphrase using
+`keytool generate pop` **on a disposable copy with the original staking address**.
+It compares the public key/proof before and after and verifies key files did not
+change. The test container has no network, public ports, capabilities or writable
+root filesystem and never runs `node`. The recovery host still needs Azure access
+for download/upload; "offline" describes the node/keytool execution, not an
+air-gapped Azure client. Secrets are not included in process arguments or logs.
+
+After success it signs a public receipt with the identity recovery private key
+and uploads `<ID>/verified.cms`. First `finalize` verifies that signature against
+the pinned public certificate, reads/checks both remote ciphertext objects and
+compares the current identity/pinned passphrase version. A missing, stale,
+tampered, wrong-network or wrong-signer receipt blocks startup. The checkbox is
+retained as an additional human acknowledgment, not the evidence of recovery.
+No live node or registered identity is changed by this drill. A failed drill does
+not start anything; check input files, RBAC propagation, installed tools, the
+preloaded pinned image and key passwords. No failed subprocess output is returned
+to CI. Retrying an already uploaded receipt requires a new backup ID; existing
+backup objects are not overwritten.
+
+### Recovering after VM loss
+
+The same tool supports `--stage-only --output-dir /dev/shm/validator-restored`.
+It performs the same cryptographic drill, then stages the verified identity files
+in that new owner-only RAM directory. It does **not** save a plaintext passphrase,
+copy files to Azure, install a service, retrieve old TPM state or start a signer.
+If the vault secret has been lost entirely, add `--recover-passphrase-to-vault`
+while staging. This writes the **original recovered passphrase** directly over
+stdin to the configured network vault, only when no secret with that name exists.
+It refuses to rotate an existing secret. Soft-deleted secrets should be recovered
+through Key Vault first; Azure will refuse creating a secret over a deleted one.
+The new secret version reference (not the passphrase) is recorded in
+`recovered-secret-id.txt`; restoring deployment metadata to refer to that version
+requires explicit review before any startup. The passphrase is never printed.
+This option needs the operator's existing network-specific Key Vault permission.
+
+The output directory is intentionally retained until the operator securely
+removes it or shuts down the isolated recovery host. The normal verification
+command cleans its temporary directory automatically.
+
+Before a real replacement, an operator must:
+
+1. Fence the old signer through Azure: stop/deallocate it and block its ability to
+   restart, using controlled deployment/RBAC access. Confirm no other VM/service
+   has this identity. A local checkbox or ping is not fencing.
+2. Keep the **registered** BLS/network identity. Do not run `prepare`/key generation
+   on a replacement or create a fresh validator identity for an existing stake.
+3. Recover current consensus signing state and consistent chain data according to
+   Telcoin's release-specific recovery instructions. The pre-activation identity
+   backup does **not** contain `consensus-db/`, `db/`, `static_files/` or a current
+   signing checkpoint. It cannot by itself authorize safe recovery of an active
+   validator. Do not restore stale consensus state or reuse observer consensus.
+4. Restore identity/configuration with owner-only permissions, retain or carefully
+   update the advertised P2P IP, and check the public key against registration.
+5. Recover the original passphrase via the pinned Key Vault secret or the separate
+   encrypted envelope on the trusted recovery host. Transport it to the new host
+   only through a protected operator channel, never command arguments/ARM/logs.
+   Reseal it with `systemd-creds encrypt --with-key=host+tpm2` to the upstream
+   credential name `bls-passphrase`, using stdin and the replacement's TPM. The
+   credential file and service use must follow the pinned installer's exact paths;
+   copying the old `.cred` file will not supply the new TPM binding. Never back up
+   or distribute the host's TPM secrets as a substitute for this recovery step.
+6. Verify quorum/epoch readiness and restore consistency before enabling the new
+   service. Retire the old signer permanently before releasing the replacement.
+
+Live consensus snapshots, source-VM fencing and automated replacement activation
+are deliberately outside this identity-backup tool. They require a separate
+coordinated maintenance procedure; the tool refuses backups after installation
+and contains no live-restore/start switch. Complete a release-specific recovery
+rehearsal before relying on this for an active validator.

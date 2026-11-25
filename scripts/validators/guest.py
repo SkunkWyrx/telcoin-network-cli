@@ -10,6 +10,7 @@ import re
 import subprocess
 import tempfile
 import urllib.request
+import recovery
 
 CONFIG = Path('/etc/oprail-validator/profile.json')
 STATE = Path('/etc/oprail-validator/state.json')
@@ -23,7 +24,7 @@ def mounts():
             raise ValueError('Required validator storage is not mounted: ' + path)
 
 
-def secret(c):
+def secret(c, secret_id=None, with_id=False):
     uri = ('http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01'
            '&resource=https%3A%2F%2Fvault.azure.net')
     with urllib.request.urlopen(urllib.request.Request(uri, headers={'Metadata': 'true'}), timeout=10) as r:
@@ -32,13 +33,19 @@ def secret(c):
     vault, name = identity['passphrase_vault'], identity['passphrase_secret']
     if vault != 'oprail-val-' + c['network'] + '-keys' or not re.fullmatch(r'[A-Za-z0-9-]+', name):
         raise ValueError('Invalid network-specific passphrase secret')
-    req = urllib.request.Request(f'https://{vault}.vault.azure.net/secrets/{name}?api-version=7.4',
+    if secret_id and not re.fullmatch(re.escape(f'https://{vault}.vault.azure.net/secrets/{name}/') + r'[a-f0-9]{32}', secret_id):
+        raise ValueError('Invalid pinned passphrase secret version')
+    uri = secret_id or f'https://{vault}.vault.azure.net/secrets/{name}'
+    req = urllib.request.Request(uri + '?api-version=7.4',
                                  headers={'Authorization': 'Bearer ' + token})
     with urllib.request.urlopen(req, timeout=15) as r:
-        value = json.load(r)['value']
+        record = json.load(r)
+        value = record['value']
+    if not re.fullmatch(re.escape(f'https://{vault}.vault.azure.net/secrets/{name}/') + r'[a-f0-9]{32}', record['id']) or (secret_id and record['id'] != secret_id):
+        raise ValueError('Unexpected passphrase secret version')
     if len(value.encode()) < 16 or value != value.strip() or '\n' in value or '\r' in value:
         raise ValueError('The validator passphrase must be at least 16 bytes with no surrounding whitespace or line breaks')
-    return (value + '\n').encode()
+    return ((value + '\n').encode(), record['id']) if with_id else (value + '\n').encode()
 
 
 def setup_args(c, phase, ip):
@@ -85,7 +92,7 @@ def save(state):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--phase', choices=['prepare', 'finalize', 'export', 'status'], required=True)
+    p.add_argument('--phase', choices=['prepare', 'backup', 'finalize', 'export', 'status'], required=True)
     p.add_argument('--public-ip', required=True)
     p.add_argument('--expected-network', choices=['adiri', 'mainnet'], required=True)
     p.add_argument('--acknowledge-key-backup', action='store_true')
@@ -126,6 +133,24 @@ def main():
                           'workerAddress': f'/ip4/{ip}/udp/49594/quic-v1',
                           'releaseTag': state['tag'], 'image': image, **payload}))
         return
+    if args.phase == 'backup':
+        state = json.loads(STATE.read_text())
+        if state['network'] != c['network'] or state['address'] != c['identity']['execution_address']:
+            raise ValueError('Wrong validator identity')
+        # Initial recovery feature is deliberately pre-activation only. A backup of
+        # active signing state needs coordinated cold snapshots, not an identity copy.
+        if state['phase'] != 'prepared' or Path('/etc/systemd/system/telcoin.service').exists():
+            raise ValueError('Only prepared validators may use identity backup; active validators require coordinated cold recovery')
+        credential, secret_id = secret(c, state['passphrase_secret_id'], with_id=True)
+        certificates = [Path('/etc/oprail-validator/recovery') / (kind + '.pem') for kind in ('identity', 'passphrase')]
+        with tempfile.TemporaryDirectory(dir='/dev/shm', prefix='validator-backup-') as directory:
+            index = recovery.create(c, state, credential, secret_id, datadir='/var/lib/telcoin', config_dir='/etc/telcoin',
+                                    state_path=STATE, profile_path=CONFIG, directory=directory, certificates=certificates)
+        (STATE.parent / 'backup-index.json').write_bytes(recovery.canonical(index))
+        (STATE.parent / 'backup-index.json').chmod(0o600)
+        print(json.dumps({'backup_id': index['backup_id'], 'network': c['network'],
+                          'storage_account': c['backup']['storage_account'], 'recovery_verified': False}))
+        return
     command = setup_args(c, 'keygen' if args.phase == 'prepare' else 'finalize', ip)
     old = json.loads(STATE.read_text()) if STATE.exists() else None
     identity = {'network': c['network'], 'address': c['identity']['execution_address'], 'ip': ip,
@@ -151,13 +176,19 @@ def main():
                 private_run(['sudo', '-u', 'azureuser', '-H', 'bash', str(installer)])
             finally:
                 installer.unlink(missing_ok=True)
-        private_run(command, secret(c))
+        credential, secret_id = secret(c, with_id=True)
+        private_run(command, credential)
         if not Path('/var/lib/telcoin/node-keys/bls.kw').exists() or Path('/var/lib/telcoin/node-keys/bls.key').exists():
             raise ValueError('Encrypted validator identity was not created')
-        state = {**identity, 'phase': 'prepared', 'node_info': '/var/lib/telcoin/node-info.yaml'}
+        state = {**identity, 'passphrase_secret_id': secret_id, 'phase': 'prepared', 'node_info': '/var/lib/telcoin/node-info.yaml'}
     else:
         if not old or old['phase'] != 'prepared' or not args.acknowledge_key_backup:
             raise ValueError('Prepare and securely back up the identity before finalizing')
+        # A boolean acknowledgment is not evidence: require persisted ciphertext,
+        # a matching identity, and a signed result from an offline key/passphrase drill.
+        certificates = [Path('/etc/oprail-validator/recovery') / (kind + '.pem') for kind in ('identity', 'passphrase')]
+        with tempfile.TemporaryDirectory(dir='/dev/shm', prefix='validator-check-') as directory:
+            recovery.check_gate(c, old, '/var/lib/telcoin', json.loads((STATE.parent / 'backup-index.json').read_text()), certificates, directory)
         if not c['networking']['p2p_source_cidrs']:
             raise ValueError('Configure approved P2P sources before starting the node')
         if Path('/etc/systemd/system/telcoin.service').exists():
@@ -166,7 +197,7 @@ def main():
         dropin = Path('/etc/systemd/system/telcoin.service.d')
         dropin.mkdir(parents=True, exist_ok=True)
         (dropin / 'storage.conf').write_text('[Unit]\nRequiresMountsFor=/var/lib/telcoin/db /var/lib/telcoin/consensus-db /var/lib/telcoin/static_files\n[Service]\nExecStartPre=/usr/bin/mountpoint -q /var/lib/telcoin/db\nExecStartPre=/usr/bin/mountpoint -q /var/lib/telcoin/consensus-db\nExecStartPre=/usr/bin/mountpoint -q /var/lib/telcoin/static_files\n')
-        private_run(command, secret(c))
+        private_run(command, secret(c, old['passphrase_secret_id']))
         state = {**old, 'phase': 'running'}
     state['node_info_sha256'] = hashlib.sha256(Path('/var/lib/telcoin/node-info.yaml').read_bytes()).hexdigest()
     save(state)

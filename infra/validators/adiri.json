@@ -109,5 +109,10 @@
     "quorum_check_before_restart": true,
     "epoch_aware_restart": true
   },
-  "dns_label": "oprail-validator-adiri-1"
+  "dns_label": "oprail-validator-adiri-1",
+  "backup": {
+    "storage_account": "ovadirie3435f20b57d",
+    "source_vm_id": "/subscriptions/8a149d4d-c52a-4432-929e-de754584e269/resourceGroups/oprail-validator-adiri/providers/Microsoft.Compute/virtualMachines/adiri-validator-1",
+    "retention_days": 90
+  }
 }
