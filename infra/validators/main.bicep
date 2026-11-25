@@ -21,6 +21,9 @@ param consensusIops int
 param executionMbps int
 param consensusMbps int
 param customData string
+param backupAccountName string
+@minValue(90)
+param backupRetentionDays int = 90
 param vaultName string
 param operatorPrincipalId string
 param autoGrow bool = true
@@ -114,7 +117,7 @@ resource vault 'Microsoft.KeyVault/vaults@2023-07-01' = {
   name: vaultName
   location: location
   tags: tags
-  properties: { tenantId: tenant().tenantId, sku: { name: 'standard', family: 'A' }, enableRbacAuthorization: true, enableSoftDelete: true, softDeleteRetentionInDays: 7 }
+  properties: { tenantId: tenant().tenantId, sku: { name: 'standard', family: 'A' }, enableRbacAuthorization: true, enableSoftDelete: true, enablePurgeProtection: true, softDeleteRetentionInDays: 90 }
 }
 resource reader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(vault.id, vm.id, 'validator-passphrase-reader')
@@ -143,3 +146,66 @@ resource growAccess 'Microsoft.Authorization/roleAssignments@2022-04-01' = [for 
 output publicIp string = ip.properties.ipAddress
 output fqdn string = ip.properties.dnsSettings.fqdn
 output vmId string = vm.id
+
+// Separate from the VM lifecycle. No public blobs, shared keys, or destructive
+// data-plane permissions. Two independently encrypted recovery envelopes.
+resource backupAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
+  name: backupAccountName
+  location: location
+  tags: tags
+  kind: 'StorageV2'
+  sku: { name: 'Standard_ZRS' }
+  properties: {
+    minimumTlsVersion: 'TLS1_2'
+    supportsHttpsTrafficOnly: true
+    allowBlobPublicAccess: false
+    allowSharedKeyAccess: false
+    defaultToOAuthAuthentication: true
+    encryption: { keySource: 'Microsoft.Storage', requireInfrastructureEncryption: true, services: { blob: { enabled: true, keyType: 'Account' } } }
+  }
+}
+resource backupService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = {
+  parent: backupAccount
+  name: 'default'
+  properties: {
+    isVersioningEnabled: true
+    deleteRetentionPolicy: { enabled: true, days: backupRetentionDays }
+    containerDeleteRetentionPolicy: { enabled: true, days: backupRetentionDays }
+  }
+}
+resource backupContainers 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = [for kind in ['identity', 'passphrase']: {
+  parent: backupService
+  name: kind
+  properties: { publicAccess: 'None' }
+}]
+resource backupRole 'Microsoft.Authorization/roleDefinitions@2022-04-01' = {
+  name: guid(resourceGroup().id, 'validator-backup-no-delete')
+  properties: {
+    roleName: 'Oprail validator recovery objects ${resourceGroup().name}'
+    type: 'CustomRole'
+    assignableScopes: [resourceGroup().id]
+    permissions: [{
+      actions: ['Microsoft.Storage/storageAccounts/blobServices/containers/read']
+      notActions: []
+      dataActions: ['Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read', 'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/write']
+      notDataActions: []
+    }]
+  }
+}
+resource backupVmAccess 'Microsoft.Authorization/roleAssignments@2022-04-01' = [for (kind, i) in ['identity', 'passphrase']: {
+  name: guid(backupContainers[i].id, vm.id, 'backup')
+  scope: backupContainers[i]
+  properties: { principalId: vm.identity.principalId, principalType: 'ServicePrincipal', roleDefinitionId: backupRole.id }
+}]
+resource backupCustodianAccess 'Microsoft.Authorization/roleAssignments@2022-04-01' = [for (kind, i) in ['identity', 'passphrase']: {
+  name: guid(backupContainers[i].id, operatorPrincipalId, 'backup')
+  scope: backupContainers[i]
+  properties: { principalId: operatorPrincipalId, roleDefinitionId: backupRole.id }
+}]
+output backupStorageAccount string = backupAccount.name
+
+resource backupDeleteLock 'Microsoft.Authorization/locks@2020-05-01' = {
+  name: 'protect-validator-recovery'
+  scope: backupAccount
+  properties: { level: 'CanNotDelete', notes: 'Validator recovery material: remove only through an approved retirement process.' }
+}

@@ -2,6 +2,7 @@
 """Validate and preview validator profiles locally without contacting Azure."""
 import argparse
 import copy
+import hashlib
 import ipaddress
 import json
 from pathlib import Path
@@ -77,6 +78,12 @@ def validate(profile):
             raise ValueError('Invalid Premium SSD v2 performance for ' + name)
     if not re.fullmatch(r'[A-Za-z0-9-]+', profile['identity']['passphrase_secret']):
         raise ValueError('Invalid passphrase secret name')
+    backup = profile['backup']
+    expected_account = 'ov' + network + hashlib.sha256((profile['subscription'] + profile['resource_group']).encode()).hexdigest()[:12]
+    expected_vm = (f"/subscriptions/{profile['subscription']}/resourceGroups/{profile['resource_group']}/providers/"
+                   f"Microsoft.Compute/virtualMachines/{profile['node_name_prefix']}1")
+    if backup['storage_account'] != expected_account or backup['source_vm_id'] != expected_vm or backup['retention_days'] < 90:
+        raise ValueError('Use isolated validator backup storage with at least 90-day retention')
     address = profile['identity']['execution_address']
     if address and (not re.fullmatch(r'0x[0-9a-fA-F]{40}', address) or int(address, 16) == 0):
         raise ValueError('Execution address must be a nonzero Ethereum address')
