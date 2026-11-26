@@ -22,6 +22,9 @@ param sshSourceCidr string
 param dnsLabel string
 param existingSubnetId string = ''
 param backendPoolId string = ''
+param publicBackendPoolId string = ''
+param publicHttpsFrontendIp string = ''
+param configureRegistryPull bool = true
 param privateRpcSourceCidrs array = []
 param acrResourceGroup string = resourceGroup().name
 param acrName string
@@ -50,7 +53,7 @@ resource nsg 'Microsoft.Network/networkSecurityGroups@2024-05-01' = {
   location: location
   properties: {
     securityRules: [
-      {
+      ...(empty(sshSourceCidr) ? [] : [{
         name: 'SSH'
         properties: {
           priority: 100
@@ -62,11 +65,15 @@ resource nsg 'Microsoft.Network/networkSecurityGroups@2024-05-01' = {
           destinationAddressPrefix: '*'
           destinationPortRange: '22'
         }
-      }
+      }])
       ...(empty(privateRpcSourceCidrs) ? [] : [{
         name: 'Private-RPC'
         properties: {priority: 115, direction: 'Inbound', access: 'Allow', protocol: 'Tcp', sourceAddressPrefixes: privateRpcSourceCidrs, sourcePortRange: '*', destinationAddressPrefix: '*', destinationPortRanges: ['8545', '8546']}
       }])
+      ...(empty(publicHttpsFrontendIp) ? [] : [
+        { name: 'Observer-Public-HTTPS', properties: {priority: 118, direction: 'Inbound', access: 'Allow', protocol: 'Tcp', sourceAddressPrefix: 'Internet', sourcePortRange: '*', destinationAddressPrefix: '${publicHttpsFrontendIp}/32', destinationPortRange: '443'} }
+        { name: 'Observer-Public-Proxy-Probe', properties: {priority: 119, direction: 'Inbound', access: 'Allow', protocol: 'Tcp', sourceAddressPrefix: 'AzureLoadBalancer', sourcePortRange: '*', destinationAddressPrefix: '*', destinationPortRange: '19091'} }
+      ])
       {
         name: 'Readiness-Probe'
         properties: {priority: 116, direction: 'Inbound', access: 'Allow', protocol: 'Tcp', sourceAddressPrefix: 'AzureLoadBalancer', sourcePortRange: '*', destinationAddressPrefix: '*', destinationPortRange: '9090'}
@@ -120,7 +127,7 @@ resource nic 'Microsoft.Network/networkInterfaces@2024-05-01' = {
       properties: {
         privateIPAllocationMethod: 'Dynamic'
         subnet: { id: empty(existingSubnetId) ? '${network.id}/subnets/observer' : existingSubnetId }
-        loadBalancerBackendAddressPools: empty(backendPoolId) ? [] : [{id: backendPoolId}]
+        loadBalancerBackendAddressPools: concat(empty(backendPoolId) ? [] : [{id: backendPoolId}], empty(publicBackendPoolId) ? [] : [{id: publicBackendPoolId}])
         publicIPAddress: { id: ip.id }
       }
     }]
@@ -179,7 +186,7 @@ resource vm 'Microsoft.Compute/virtualMachines@2024-03-01' = {
     networkProfile: { networkInterfaces: [{ id: nic.id }] }
   }
 }
-module pull 'acr-pull.bicep' = {
+module pull 'acr-pull.bicep' = if (configureRegistryPull) {
   name: '${vmName}-registry-access'
   scope: resourceGroup(acrResourceGroup)
   params: {

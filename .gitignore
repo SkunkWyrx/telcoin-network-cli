@@ -29,3 +29,6 @@ __pycache__/
 
 # Local validator public onboarding exports and controller state
 .validator-state/
+
+# Local mainnet identity handoff exports
+.mainnet-preparation/

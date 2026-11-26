@@ -1,0 +1,22 @@
+name: Mainnet preparation checks
+on:
+  pull_request:
+    paths:
+      - 'infra/mainnet/**'
+      - 'infra/vm/main.bicep'
+      - 'scripts/mainnet/**'
+      - 'tests/test_mainnet_preparation.py'
+      - '.github/workflows/mainnet-preparation-checks.yml'
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 -m unittest discover -s tests -p 'test_*.py'
+      - run: python3 scripts/mainnet/prepare.py
+      - run: az bicep build --file infra/mainnet/prepare.bicep --outfile /tmp/mainnet-preparation.json
