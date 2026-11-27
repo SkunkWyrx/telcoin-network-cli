@@ -1,0 +1,8 @@
+[Unit]
+Description=Deallocate an idle observer management runner
+After=network-online.target
+[Service]
+Type=oneshot
+ExecStartPre=/usr/bin/az login --identity --output none
+ExecStart=/usr/bin/python3 /usr/local/sbin/oprail-runner-power idle
+TimeoutStartSec=180

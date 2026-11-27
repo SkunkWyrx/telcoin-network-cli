@@ -255,9 +255,9 @@ sync
                         raise
                     time.sleep(5)
 
-    def pairs(self):
+    def pairs(self, include_recovery=False):
         snapshots = self.az('snapshot', 'list', '-g', self.c['resource_group'])
-        return complete_pairs(snapshots, self.c['network'], self.c['pool'])
+        return complete_pairs(snapshots, self.c['network'], self.c['pool'], include_recovery=include_recovery)
 
     def snapshot(self, source=None):
         nodes = upgrade_order(self.c['nodes'])
@@ -303,7 +303,7 @@ sync
             for lun, kind in [(0, 'execution'), (1, 'consensus')]:
                 tags = ['managed-by=oprail-observer-fleet', 'network=' + self.c['network'],
                         'pool=' + self.c['pool'], 'capture=' + capture, 'disk=' + kind,
-                        'capture-status=pending', 'captured-at=' + stamp.isoformat()]
+                        'capture-status=pending', 'captured-at=' + stamp.isoformat(), 'source-node=' + node['name']]
                 snapshot = self.az('snapshot', 'create', '-g', self.c['resource_group'],
                                    '-n', capture + '-' + kind, '--location', self.c['location'],
                                    '--source', disks[lun], '--incremental', 'true', '--tags', *tags)
@@ -341,14 +341,33 @@ sync
         return {**pair, 'created': pair['created'].isoformat()}
 
     def prune(self):
-        keep, delete = retention(self.pairs(), datetime.now(timezone.utc), self.c.get('snapshot_retention_days', 7))
+        now = datetime.now(timezone.utc)
+        current = self.pairs()
+        if not current or (now - current[-1]['created']).total_seconds() > self.c.get('backup_max_age_hours', 24) * 3600:
+            raise ValueError('Keep existing recovery points until a current completed backup is verified')
+        keep, delete = retention(self.pairs(include_recovery=self.c.get('prune_recovery_snapshots', False)), now,
+                                 self.c.get('snapshot_retention_days', 7))
         print(json.dumps({'keep': [p['capture'] for p in keep], 'delete': [p['capture'] for p in delete]}, indent=2))
         if self.apply:
-            for pair in delete:
-                for kind in ('execution', 'consensus'):
-                    self.az('snapshot', 'delete', '--ids', pair[kind])
+            path = self.state / 'prune.json'
+            previous = json.loads(path.read_text()) if path.exists() else {}
+            pending = previous.get('remaining', [])
+            pending = list(dict.fromkeys(pending + [p[k] for p in delete for k in ('execution','consensus')]))
+            self.save('prune.json', {'remaining': pending})
+            present = {s['id'].lower(): s for s in self.az('snapshot','list','-g',self.c['resource_group'])}
+            for identifier in list(pending):
+                if identifier.lower() in present:
+                    tags = present[identifier.lower()].get('tags') or {}
+                    owners = ['oprail-observer-fleet'] + (['oprail-observer-recovery'] if self.c.get('prune_recovery_snapshots') else [])
+                    if tags.get('managed-by') not in owners or tags.get('network') != self.c['network'] or (tags.get('managed-by') == 'oprail-observer-fleet' and tags.get('pool') != self.c['pool']):
+                        raise ValueError('Snapshot deletion ownership changed; inspect before retry')
+                    if identifier in {p[k] for p in keep for k in ('execution','consensus')}:
+                        raise ValueError('Refusing deletion of a retained recovery point')
+                    self.az('snapshot','delete','--ids',identifier)
+                pending.remove(identifier)
+                self.save('prune.json', {'remaining': pending})
 
-    def add(self, env_file, candidate_image=None, fresh=False):
+    def add(self, env_file, candidate_image=None, fresh=False, seed_pair=None, serve_public=True, temporary_backup=False):
         if candidate_image:
             image = pinned_image(candidate_image)
             expected = self.c['registry'] + '.azurecr.io/' + self.c['repository'] + '@'
@@ -360,7 +379,12 @@ sync
             print('Public HTTPS membership requires private sync and a verified TLS proxy.')
         if not self.apply:
             return
-        pairs = [] if fresh else self.pairs()
+        if fresh and seed_pair: raise ValueError('Cannot combine a fresh database with seed disks')
+        if seed_pair:
+            prefix = f"/subscriptions/{self.c['subscription']}/resourceGroups/{self.c['resource_group']}/providers/Microsoft.Compute/snapshots/"
+            if any(not seed_pair[k].lower().startswith(prefix.lower()) for k in ('execution','consensus')):
+                raise ValueError('Backup seed snapshots must be in this observer resource group')
+        pairs = [seed_pair] if seed_pair else ([] if fresh else self.pairs())
         if not fresh and not pairs:
             raise ValueError('No completed owned snapshot pair; refuse genesis fallback')
         if not candidate_image:
@@ -399,6 +423,8 @@ sync
             raise ValueError('Node settings require VM_NAME and VM_DNS_LABEL')
         if any(n['name'] == settings['VM_NAME'] for n in self.c['nodes']):
             raise ValueError('Node name already belongs to this pool')
+        if temporary_backup and (self.c['network'] != 'adiri' or serve_public or not re.fullmatch(r'adiri-observer-backup-[a-f0-9]{8}', settings['VM_NAME'])):
+            raise ValueError('Invalid temporary backup observer')
         env.update(settings)
         execute(['bash', str(ROOT / 'scripts/deploy-azure-vm.sh')], capture=False, env=env)
         node = {'name': settings['VM_NAME'],
@@ -406,10 +432,12 @@ sync
                 'ordinal': max([n['ordinal'] for n in self.c['nodes']] or [0]) + 1}
         self.c['nodes'].append(node)
         self.save_profile()
+        if temporary_backup:
+            self.az('tag','update','--resource-id',self.vm(node)['id'],'--operation','Merge','--tags','purpose=temporary-backup-observer')
         # Persist provisioned nodes before the potentially long sync wait.
         self.wait_synced(node)
         print('Node synced and added to the pool profile:', node['name'])
-        if self.c.get('public_rpc'):
+        if serve_public and self.c.get('public_rpc'):
             self.install_public_rpc(node)
 
     def install_public_rpc(self, node):
@@ -569,7 +597,7 @@ sync
             raise ValueError('Invalid renewal certificate name')
         cert_args = ' --cert-name ' + shlex.quote(cert_name) if cert_name else ''
         old_vm, new_vm = self.vm(old), self.vm(new)
-        assignments = self.az('role', 'assignment', 'list', '--all', '--query',
+        assignments = self.az('role', 'assignment', 'list', '--all', '--fill-principal-name', 'false', '--query',
                               "[?principalId=='" + old_vm['identity']['principalId'] + "']")
         root = ('/subscriptions/' + self.c['subscription'] + '/resourceGroups/' +
                 self.c['resource_group'] + '/providers/').lower()
@@ -622,7 +650,7 @@ sync
         return (f"/subscriptions/{self.c['subscription']}/resourceGroups/{self.c['resource_group']}/providers/"
                 f"Microsoft.Network/loadBalancers/{self.c.get('load_balancer', self.c['network'] + '-observers')}/backendAddressPools/observers")
 
-    def remove(self, name):
+    def remove(self, name, disposable=False):
         if name == (self.c.get('public_rpc') or {}).get('issuer'):
             raise ValueError('Move the certificate issuer before removing this node')
         record_name = 'remove-' + name + '.json'
@@ -641,8 +669,12 @@ sync
         others = [n for n in self.c['nodes'] if n['name'] != name]
         if not any(self.synced(n) for n in others):
             raise ValueError('Refuse removal without another synced observer')
+        if disposable and not re.fullmatch(r'adiri-observer-backup-[a-f0-9]{8}', name):
+            raise ValueError('Refusing disposable cleanup of a permanent observer')
         if record is None:
             vm = self.vm(node)
+            if disposable and (vm.get('tags') or {}).get('purpose') != 'temporary-backup-observer':
+                raise ValueError('Unowned temporary observer; inspect before cleanup')
             nics = [self.az('network', 'nic', 'show', '--ids', n['id']) for n in vm['networkProfile']['networkInterfaces']]
             resources = [('vm', vm['id'])]
             for nic in nics:
@@ -655,13 +687,20 @@ sync
             resources.extend(('disk', disk) for disk in
                              [vm['storageProfile']['osDisk']['managedDisk']['id']] +
                              [d['managedDisk']['id'] for d in vm['storageProfile']['dataDisks']])
-            record = {'node': node, 'resources': resources, 'stopped': False,
+            record = {'node': node, 'resources': resources, 'stopped': False, 'disposable': disposable,
                       'principal': (vm.get('identity') or {}).get('principalId')}
             self.save(record_name, record)
+        if disposable and not record.get('disposable'):
+            raise ValueError('Cleanup manifest was not created for a disposable observer')
         if not record['stopped']:
-            self.ssh(record['node'], 'install -d /run/telcoin\ntouch /run/telcoin/draining\n')
-            time.sleep(self.c.get('drain_seconds', 30))
-            self.ssh(record['node'], 'systemctl stop telcoin-observer\nsync\n')
+            try:
+                self.ssh(record['node'], 'install -d /run/telcoin\ntouch /run/telcoin/draining\n')
+                time.sleep(self.c.get('drain_seconds', 30))
+                self.ssh(record['node'], 'systemctl stop telcoin-observer\nsync\n')
+            except subprocess.CalledProcessError:
+                if not disposable: raise
+                # This exact tagged helper carries no public traffic/stake. It may
+                # be deleted even if a failed bootstrap left SSH unavailable.
             record['stopped'] = True
             self.save(record_name, record)
         # The manifest survives a partial deletion. Azure's current inventory lets a
@@ -674,7 +713,7 @@ sync
                     args.append('--yes')
                 self.az(*args)
         if record['principal']:
-            assignments = self.az('role', 'assignment', 'list', '--all', '--query',
+            assignments = self.az('role', 'assignment', 'list', '--all', '--fill-principal-name', 'false', '--query',
                                   "[?principalId=='" + record['principal'] + "']")
             for assignment in assignments:
                 self.az('role', 'assignment', 'delete', '--ids', assignment['id'])

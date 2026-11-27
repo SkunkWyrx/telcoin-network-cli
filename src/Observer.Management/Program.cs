@@ -9,6 +9,8 @@ using Microsoft.AspNetCore.Antiforgery;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddHttpClient("remote", c => c.Timeout = TimeSpan.FromSeconds(15));
+builder.Services.AddHttpClient("monitor", c => c.Timeout = TimeSpan.FromSeconds(8));
+builder.Services.AddHostedService<RpcMonitorWorker>();
 builder.Services.AddSingleton<RpcApiKeys>(services => {
     var vault = builder.Configuration["RpcKeys:Vault"];
     if (string.IsNullOrEmpty(vault)) return null!;

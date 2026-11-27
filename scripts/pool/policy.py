@@ -9,13 +9,14 @@ def pinned_image(value):
     return value
 
 
-def complete_pairs(snapshots, network, pool):
+def complete_pairs(snapshots, network, pool, include_recovery=False):
     groups = {}
     for snapshot in snapshots:
         tags = snapshot.get('tags') or {}
-        if (tags.get('managed-by'), tags.get('network'), tags.get('pool')) != (
-                'oprail-observer-fleet', network, pool):
-            continue
+        owned = tags.get('network') == network and (
+            (tags.get('managed-by') == 'oprail-observer-fleet' and tags.get('pool') == pool) or
+            (include_recovery and tags.get('managed-by') == 'oprail-observer-recovery' and tags.get('node')))
+        if not owned: continue
         capture, disk = tags.get('capture'), tags.get('disk')
         if not capture or disk not in ('execution', 'consensus'):
             continue
