@@ -259,7 +259,7 @@ sync
         snapshots = self.az('snapshot', 'list', '-g', self.c['resource_group'])
         return complete_pairs(snapshots, self.c['network'], self.c['pool'], include_recovery=include_recovery)
 
-    def snapshot(self, source=None):
+    def snapshot(self, source=None, disposable=False):
         nodes = upgrade_order(self.c['nodes'])
         if not nodes:
             raise ValueError('No nodes configured')
@@ -272,6 +272,8 @@ sync
         vm = self.vm(node)
         instance = self.az('vm', 'get-instance-view', '-g', self.c['resource_group'], '-n', node['name'])
         running = any(s['code'] == 'PowerState/running' for s in instance['instanceView']['statuses'])
+        if disposable and (not re.fullmatch(r'adiri-observer-backup-[a-f0-9]{8}', node['name']) or (vm.get('tags') or {}).get('purpose') != 'temporary-backup-observer'):
+            raise ValueError('Only a tagged disposable helper may remain deallocated during snapshot copy')
         if not running:
             raise ValueError('Scheduled capture requires a running, healthy source; never starts a stopped node')
         if not self.synced(node):
@@ -309,18 +311,8 @@ sync
                                    '--source', disks[lun], '--incremental', 'true', '--tags', *tags)
                 created.append(snapshot['id'])
         finally:
-            self.az('vm', 'start', '-g', self.c['resource_group'], '-n', node['name'])
-            # Boot/SSH can take minutes. Retry without allowing a failed capture to skip recovery.
-            for attempt in range(60):
-                try:
-                    self.ssh(node, 'systemctl start telcoin-observer\n')
-                    break
-                except subprocess.CalledProcessError:
-                    if attempt == 59:
-                        raise
-                    time.sleep(5)
-            self.wait_synced(node)
-            self.ssh(node, 'rm -f /run/telcoin/draining\n')
+            if not disposable:
+                self.restart_snapshot_source(node)
         deadline = time.monotonic() + self.c.get('snapshot_copy_timeout_seconds', 14400)
         while time.monotonic() < deadline:
             copies = [self.az('snapshot', 'show', '--ids', resource) for resource in created]
@@ -329,12 +321,26 @@ sync
             time.sleep(30)
         else:
             raise RuntimeError('Copies not complete; partial capture retained, latest unchanged')
+        if disposable:
+            self.restart_snapshot_source(node)
         for resource in created:
             self.az('tag', 'update', '--resource-id', resource, '--operation', 'Merge',
                     '--tags', 'capture-status=complete')
         pairs = self.pairs()
         self.save('latest-snapshot.json', self.serial_pair(pairs[-1]))
         print('Latest validated pair:', capture)
+
+    def restart_snapshot_source(self, node):
+        self.az('vm', 'start', '-g', self.c['resource_group'], '-n', node['name'])
+        for attempt in range(60):
+            try:
+                self.ssh(node, 'systemctl start telcoin-observer\n')
+                break
+            except subprocess.CalledProcessError:
+                if attempt == 59: raise
+                time.sleep(5)
+        self.wait_synced(node)
+        self.ssh(node, 'rm -f /run/telcoin/draining\n')
 
     @staticmethod
     def serial_pair(pair):

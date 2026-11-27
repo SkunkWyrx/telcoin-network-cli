@@ -27,6 +27,12 @@ static class RpcMonitorTests {
         if(!sample["OutageIncident"] || sample.ContainsKey("LagIncident"))throw new Exception("Outage handling");
         sample=await monitor.Sample(default);
         if(sample["OutageIncident"] || sample.ContainsKey("LagIncident"))throw new Exception("Reference failure cannot raise lag");
+        var at=DateTimeOffset.UtcNow.AddMinutes(1);
+        monitor.Advance(new(){["LagIncident"]=true},at);
+        monitor.Advance(new(){["LagIncident"]=true},at.AddMinutes(1));
+        if(monitor.Advance(new(){["LagIncident"]=true},at.AddMinutes(4))["LagIncident"]!=0)throw new Exception("Stale streak resets after sampling gap");
+        var wrong=new RpcMonitor(new HttpClient(new Fake(new(["0x2db"]))),()=>Task.FromResult("fixture"),"https://public.example","https://reference.example",2017,"/fixture","centralus");
+        if(!(await wrong.Sample(default))["OutageIncident"])throw new Exception("Wrong network cannot report healthy");
         var publish=new Fake(new(["0x7e1","0x64","0x7e1","0x64"]));
         var publisher=new RpcMonitor(new HttpClient(publish),()=>Task.FromResult("fixture-token"),"https://public.example","https://reference.example",2017,"/fixture-resource","centralus");
         await publisher.Tick(default);

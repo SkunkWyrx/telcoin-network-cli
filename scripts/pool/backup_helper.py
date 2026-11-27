@@ -106,7 +106,7 @@ def _backup(fleet, source_name=None):
         if not fleet.synced(source):raise ValueError('Public source unhealthy; do not take helper offline')
         before={p['capture'] for p in fleet.pairs()}
         state['stage']='capturing';fleet.save('scheduled-backup.json',state)
-        fleet.snapshot(helper['name'])
+        fleet.snapshot(helper['name'],disposable=True)
         latest=fleet.pairs()[-1]
         if latest['capture'] in before:raise RuntimeError('A new cold backup was not recorded')
         for kind in ('execution','consensus'):
@@ -141,7 +141,8 @@ def backup(fleet, source_name=None):
                     fleet.remove(name,disposable=True)
                     snapshots=fleet.az('snapshot','list','-g',fleet.c['resource_group'])
                     for item in snapshots:
-                        if item['name'].startswith(name+'-seed-') and (item.get('tags') or {}).get('managed-by')=='oprail-observer-seed':
+                        if ((item['name'].startswith(name+'-seed-') and (item.get('tags') or {}).get('managed-by')=='oprail-observer-seed') or
+                            ((item.get('tags') or {}).get('source-node')==name and (item.get('tags') or {}).get('capture-status')=='pending' and (item.get('tags') or {}).get('network')==fleet.c['network'] and (item.get('tags') or {}).get('managed-by')=='oprail-observer-fleet')):
                             fleet.az('snapshot','delete','--ids',item['id'])
                     Path(state['env_file']).unlink(missing_ok=True)
                     state['stage']='failed';fleet.save('scheduled-backup.json',state)

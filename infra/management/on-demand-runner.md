@@ -44,7 +44,8 @@ use the serialized GitHub workflows. Power controls do not change RPC VM state.
 
 Adiri uses `backup_mode=temporary-observer`. Each due capture creates/resumes one
 disposable observer on the current exact image, waits for canonical hash/sync
-readiness, then takes a graceful cold snapshot of that helper. The public source
+readiness, then takes a graceful cold snapshot of that helper. The helper stays deallocated during Azure background copy and restarts for
+validation only when the copies finish. The public source
 is never stopped, deallocated or drained. The helper is not added to public HTTPS.
 Its private membership/readiness is used only by the controller during the job.
 

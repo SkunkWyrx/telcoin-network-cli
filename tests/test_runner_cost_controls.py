@@ -86,7 +86,7 @@ class RunnerCostTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             f,source,helper=self.helper_fleet(directory)
             backup_helper.backup(f)
-            f.snapshot.assert_called_once_with(helper['name'])
+            f.snapshot.assert_called_once_with(helper['name'],disposable=True)
             f.remove.assert_called_once_with(helper['name'],disposable=True)
             f.prune.assert_called_once()
             self.assertEqual(json.loads((f.state/'scheduled-backup.json').read_text())['stage'],'completed')
@@ -122,3 +122,32 @@ class RunnerCostTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             f.state=Path(d)
             with self.assertRaises(ValueError):f.remove('primary',disposable=True)
+
+    @patch('fleet.time.sleep')
+    def test_disposable_snapshot_restarts_only_after_background_copy(self,_sleep):
+        f=object.__new__(Fleet);f.apply=True
+        helper={'name':'adiri-observer-backup-1234abcd','host':'helper','ordinal':2};source={'name':'primary','host':'public','ordinal':1}
+        f.c={'network':'adiri','pool':'adiri','nodes':[source,helper],'resource_group':'rg','location':'centralus','drain_seconds':0}
+        f.vm=Mock(return_value={'tags':{'purpose':'temporary-backup-observer'},'storageProfile':{'dataDisks':[
+            {'lun':0,'managedDisk':{'id':'source-e'}},{'lun':1,'managedDisk':{'id':'source-c'}}]}})
+        f.synced=Mock(return_value=True);f.ssh=Mock();f.save=Mock();events=[];checks=0
+        def az(*args):
+            nonlocal checks
+            if args[:2]==('vm','get-instance-view'):return {'instanceView':{'statuses':[{'code':'PowerState/running'}]}}
+            if args[:2]==('vm','deallocate'):events.append(('deallocate',args[-1]));return {}
+            if args[:2]==('snapshot','create'):return {'id':args[args.index('-n')+1]}
+            if args[:2]==('snapshot','show'):
+                checks+=1;complete=checks>2
+                if complete:events.append(('copy-complete',args[-1]))
+                return {'completionPercent':100 if complete else 0,'provisioningState':'Succeeded'}
+            return {}
+        f.az=az;f.restart_snapshot_source=Mock(side_effect=lambda node:events.append(('restart',node['name'])))
+        f.pairs=Mock(return_value=[{'capture':'new','created':datetime.now(timezone.utc),'execution':'e','consensus':'c'}])
+        f.snapshot(helper['name'],disposable=True)
+        self.assertEqual(events[0],('deallocate',helper['name']))
+        self.assertEqual(events[-1],('restart',helper['name']))
+        self.assertEqual(len([e for e in events if e[0]=='copy-complete']),2)
+        self.assertEqual({call.args[0]['name'] for call in f.ssh.call_args_list},{helper['name']})
+        events.clear()
+        with self.assertRaises(ValueError):f.snapshot(source['name'],disposable=True)
+        self.assertEqual(events,[])
