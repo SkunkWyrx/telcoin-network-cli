@@ -26,11 +26,19 @@ def main():
         except BlockingIOError:
             print('Another pool operation is running; skipping tick.')
             return
+        pending = fleet.state / 'scheduled-backup.json'
+        if pending.exists() and json.loads(pending.read_text()).get('stage') == 'failed':
+            print('Backup helper failed and was cleaned up; automatic retries paused for operator review.')
+            return
         pairs = fleet.pairs()
         if pairs and (datetime.now(timezone.utc) - pairs[-1]['created']).total_seconds() < hours * 3600:
             print('Latest snapshot is inside the configured interval; no new capture.')
             return
-        fleet.snapshot()
+        if fleet.c.get('backup_mode') == 'temporary-observer':
+            from backup_helper import backup
+            backup(fleet)
+        else:
+            fleet.snapshot()
         # Never prune if capture or source recovery fails.
         fleet.prune()
 

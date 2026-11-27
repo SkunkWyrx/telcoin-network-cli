@@ -80,5 +80,9 @@
     "auto_grow": true,
     "threshold_percent": 75,
     "increment_gb": 50
-  }
+  },
+  "backup_mode": "temporary-observer",
+  "backup_max_age_hours": 24,
+  "backup_helper_timeout_seconds": 7200,
+  "prune_recovery_snapshots": true
 }

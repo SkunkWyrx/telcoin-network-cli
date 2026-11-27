@@ -70,10 +70,13 @@ jobs:
           LB: ${{ vars.OBSERVER_LOAD_BALANCER }}
           RPC: ${{ vars.OBSERVER_REFERENCE_RPC }}
           CHAIN: ${{ vars.OBSERVER_CHAIN_ID }}
+          RUNNER_ON_DEMAND: ${{ vars.ADIRI_RUNNER_ON_DEMAND_ENABLED }}
+          MONITOR_ENABLED: ${{ vars.OBSERVER_RPC_MONITOR_ENABLED }}
           SUBSCRIPTION: ${{ vars.AZURE_SUBSCRIPTION_ID }}
         shell: bash
         run: |
           set -euo pipefail
+          if [ "$NETWORK" = adiri ] && [ "$RUNNER_ON_DEMAND" = true ]; then test "$MONITOR_ENABLED" = true; fi
           test -n "$APP" && test -n "$RG" && test -n "$RPC" && test -n "$CHAIN" && test -n "$LB" && test -n "$PUBLIC_LB"
           test "$OBSERVER_RG" = "oprail-observer-$NETWORK"
           test "$(az containerapp show -g "$RG" -n "$APP" --query tags.purpose -o tsv)" = oprail-observer-management
@@ -93,4 +96,4 @@ jobs:
           if [ -n "$KEY_VAULT" ]; then extra+=("RpcKeys__Vault=$KEY_VAULT"); fi
           az containerapp update -g "$RG" -n "$APP" --container-name management --image "$pinned" --output none --set-env-vars \
             "Fleet__Network=$NETWORK" "Fleet__Subscription=$SUBSCRIPTION" "Fleet__ResourceGroup=$OBSERVER_RG" \
-            "Fleet__LoadBalancer=$LB" "Fleet__PublicLoadBalancer=$PUBLIC_LB" "Fleet__ReferenceRpc=$RPC" "Fleet__ChainId=$CHAIN" "${extra[@]}"
+            "Monitoring__Enabled=${MONITOR_ENABLED:-false}" "Fleet__LoadBalancer=$LB" "Fleet__PublicLoadBalancer=$PUBLIC_LB" "Fleet__ReferenceRpc=$RPC" "Fleet__ChainId=$CHAIN" "${extra[@]}"

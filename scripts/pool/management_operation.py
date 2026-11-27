@@ -99,7 +99,11 @@ def run(fleet, operation, argument, env_root=Path('/etc/oprail-observers')):
     elif operation == 'snapshot':
         if argument not in actual:
             raise ValueError('Snapshot source is not in the managed pool')
-        fleet.snapshot(argument)
+        if fleet.c.get('backup_mode') == 'temporary-observer':
+            from backup_helper import backup
+            backup(fleet, source_name=argument)
+        else:
+            fleet.snapshot(argument)
     elif operation == 'remove':
         if argument == (fleet.c.get('public_rpc') or {}).get('issuer'):
             raise ValueError('Move the certificate issuer before removing this node')

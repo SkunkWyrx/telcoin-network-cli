@@ -84,11 +84,11 @@ sealed class RpcApiKeys(HttpClient client, string vault, Func<Task<string>> toke
             url = page["nextLink"]?.GetValue<string>();
         }
     }
-    public static async Task<string> IdentityToken(HttpClient client) {
+    public static async Task<string> IdentityToken(HttpClient client, string resource = "https://vault.azure.net") {
         var endpoint = Environment.GetEnvironmentVariable("IDENTITY_ENDPOINT") ?? throw new InvalidOperationException("Managed identity unavailable");
         var header = Environment.GetEnvironmentVariable("IDENTITY_HEADER") ?? throw new InvalidOperationException("Managed identity unavailable");
         using var request = new HttpRequestMessage(HttpMethod.Get,
-            endpoint + (endpoint.Contains('?') ? "&" : "?") + "api-version=2019-08-01&resource=https%3A%2F%2Fvault.azure.net");
+            endpoint + (endpoint.Contains('?') ? "&" : "?") + "api-version=2019-08-01&resource=" + Uri.EscapeDataString(resource));
         request.Headers.Add("X-IDENTITY-HEADER", header);
         using var response = await client.SendAsync(request);
         response.EnsureSuccessStatusCode();

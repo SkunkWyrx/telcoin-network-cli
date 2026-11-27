@@ -26,9 +26,27 @@ concurrency:
   group: observer-lifecycle-${{ inputs.network }}
   cancel-in-progress: false
 jobs:
-  operate:
+  wake:
     if: github.ref == 'refs/heads/main' && (inputs.network == 'adiri' || vars.OBSERVER_MAINNET_ENABLED == 'true')
+    runs-on: ubuntu-latest
     environment: observer-operations-${{ inputs.network }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        if: inputs.network != 'mainnet' && vars.ADIRI_RUNNER_ON_DEMAND_ENABLED == 'true'
+        with:
+          client-id: ${{ vars.ADIRI_RUNNER_POWER_CLIENT_ID }}
+          tenant-id: affb6d7e-3b1f-4fff-9c0d-83cf380f0d88
+          subscription-id: 8a149d4d-c52a-4432-929e-de754584e269
+      - name: Wake the Adiri management runner after approval
+        if: inputs.network != 'mainnet' && vars.ADIRI_RUNNER_ON_DEMAND_ENABLED == 'true'
+        run: python3 scripts/pool/runner_power.py start
+  operate:
+    needs: wake
+    if: github.ref == 'refs/heads/main' && (inputs.network == 'adiri' || vars.OBSERVER_MAINNET_ENABLED == 'true')
     runs-on: [self-hosted, "${{ inputs.network == 'mainnet' && 'observer-operations-mainnet' || 'observer-operations' }}"]
     timeout-minutes: 1440
     env:
@@ -47,3 +65,19 @@ jobs:
           set -euo pipefail
           case "$NETWORK" in adiri|mainnet) ;; *) exit 1 ;; esac
           python3 scripts/pool/management_operation.py --config "/etc/oprail-observers/$NETWORK/pool.json" --expected-network "$NETWORK" --operation "$OPERATION" --argument "$ARGUMENT" --request-id "$REQUEST_ID"
+  sleep:
+    needs: [wake, operate]
+    if: always() && needs.wake.result == 'success' && inputs.network != 'mainnet' && vars.ADIRI_RUNNER_ON_DEMAND_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.ADIRI_RUNNER_POWER_CLIENT_ID }}
+          tenant-id: affb6d7e-3b1f-4fff-9c0d-83cf380f0d88
+          subscription-id: 8a149d4d-c52a-4432-929e-de754584e269
+      - run: python3 scripts/pool/runner_power.py stop

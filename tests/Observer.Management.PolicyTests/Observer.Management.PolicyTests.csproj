@@ -7,4 +7,5 @@
   <Compile Include="../../src/Observer.Management/FleetEndpoints.cs" Link="FleetEndpoints.cs" />
 </ItemGroup>
 <ItemGroup><Compile Include="../../src/Observer.Management/RpcApiKeys.cs" Link="RpcApiKeys.cs" /></ItemGroup>
+<ItemGroup><Compile Include="../../src/Observer.Management/RpcMonitor.cs" Link="RpcMonitor.cs" /></ItemGroup>
 </Project>
