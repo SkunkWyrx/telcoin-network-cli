@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Net.Http.Json;
 using System.Net.Http.Headers;
+using System.Text;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -49,10 +51,11 @@ sealed class RpcMonitor(HttpClient client, Func<Task<string>> token, string publ
         foreach(var metric in metrics) {
             using var request=new HttpRequestMessage(HttpMethod.Post,$"https://{region}.monitoring.azure.com{resource}/metrics");
             request.Headers.Authorization=new AuthenticationHeaderValue("Bearer",access);
-            request.Content=JsonContent.Create(new { time=DateTimeOffset.UtcNow.ToString("O"), data=new { baseData=new {
+            // Azure's metrics ingestion rejects chunked request bodies (HTTP 411).
+            request.Content=new StringContent(JsonSerializer.Serialize(new { time=DateTimeOffset.UtcNow.ToString("O"), data=new { baseData=new {
                 metric=metric.Key, @namespace="Oprail.AdiriRPC", dimNames=Array.Empty<string>(),
                 series=new[] { new { dimValues=Array.Empty<string>(), min=metric.Value,max=metric.Value,sum=metric.Value,count=1 } }
-            } } });
+            } } }),Encoding.UTF8,"application/json");
             using var response=await client.SendAsync(request,cancel);response.EnsureSuccessStatusCode();
         }
     }

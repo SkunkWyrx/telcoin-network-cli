@@ -7,6 +7,8 @@ static class RpcMonitorTests {
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken cancel) {
             Requests.Add(request);
             if(request.RequestUri!.Host.EndsWith("monitoring.azure.com")) {
+                if(request.Content!.Headers.ContentLength is not > 0)
+                    throw new Exception("Azure metrics requires a known Content-Length before sending");
                 var body=await request.Content!.ReadAsStringAsync(cancel);
                 if(!body.Contains("Oprail.AdiriRPC"))throw new Exception("Metric namespace changed");
                 return new(HttpStatusCode.OK);
