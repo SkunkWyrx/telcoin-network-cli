@@ -410,12 +410,20 @@ sync
                    EXISTING_SUBNET_ID=self.subnet_id(), BACKEND_POOL_ID=self.backend_id(),
                    PRIVATE_RPC_SOURCE_CIDRS=self.c.get('private_rpc_source_cidrs', self.c.get('api_cidr', '10.51.0.0/16')), PUBLIC_RPC_ENABLED='false')
         storage = self.c.get('storage', {})
+        # Pool sizing wins over a legacy node template or inherited shell settings.
+        if self.c.get('compute', {}).get('vm_size'):
+            env['VM_SIZE'] = self.c['compute']['vm_size']
+        if 'iops' in storage:
+            env['DATA_DISK_IOPS'] = str(storage['iops'])
         for key, env_key in [('execution_size_gb', 'EXECUTION_DISK_SIZE_GB'), ('consensus_size_gb', 'CONSENSUS_DISK_SIZE_GB')]:
             size = storage.get(key, 512)
             if not fresh:
                 kind = 'execution' if key.startswith('execution') else 'consensus'
                 source = self.az('snapshot', 'show', '--ids', pair[kind])
-                size = max(size, int(source.get('diskSizeGB', source.get('diskSizeGb'))))
+                restored_size = int(source.get('diskSizeGB', source.get('diskSizeGb')))
+                if restored_size > size:
+                    print(f'{kind} snapshot requires {restored_size} GiB; the configured {size} GiB floor cannot shrink a restore.')
+                size = max(size, restored_size)
             env[env_key] = str(size)
         env['DISK_AUTO_GROW_ENABLED'] = str(storage.get('auto_grow', False)).lower()
         env['DISK_GROW_THRESHOLD_PERCENT'] = str(storage.get('threshold_percent', 75))

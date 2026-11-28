@@ -5,6 +5,9 @@
   "resource_group": "oprail-observer-adiri",
   "source_resource_group": "telcoin-network-testnet",
   "location": "centralus",
+  "compute": {
+    "vm_size": "Standard_D2s_v6"
+  },
   "registry": "acaenvacrxvyzqyxhfzsno",
   "registry_resource_group": "telcoin-network-testnet",
   "repository": "telcoin-observer/adiri",
@@ -75,6 +78,7 @@
     }
   },
   "storage": {
+    "iops": 3000,
     "execution_size_gb": 50,
     "consensus_size_gb": 50,
     "auto_grow": true,

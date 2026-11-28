@@ -504,10 +504,18 @@ For issues related to:
 
 ## Azure VM observer (two Premium SSD data disks)
 
-Deploy a new Ubuntu 24.04 VM with `scripts/deploy-azure-vm.sh`. The default is
+Deploy a new Ubuntu 24.04 VM with `scripts/deploy-azure-vm.sh`. The bare script fallback is
 `Standard_D4s_v6` (4 vCPU, 16 GiB RAM), a persistent 64 GiB Premium SSD OS disk,
 and **two separate 512 GiB Premium SSD v2 LRS managed disks**. Data disk host
 caching is disabled. Each data disk starts at 5,000 IOPS and 125 MB/s.
+The Adiri fleet profile (`infra/pool/adiri.json`) and `.env.example` instead use
+`Standard_D2s_v6` (2 vCPU, 8 GiB RAM), two **50 GiB** data disks, and **3,000 IOPS**
+per disk at 125 MB/s. Adiri disks grow by 50 GiB at 75% utilization.
+Fleet provisioning applies `compute.vm_size` and `storage.iops` explicitly over
+legacy node-template settings. Mainnet settings remain independent. Initial sync
+can require more CPU and IOPS than steady operation; adjust the network profile
+when that throughput is needed. A snapshot's capacity is a minimum restore size:
+restoring an older 512 GiB snapshot still creates a disk of at least 512 GiB.
 `VM_ZONE=1` places the VM and both disks in the same availability zone.
 The VM uses NVMe; cloud-init installs `azure-vm-utils` and identifies data disks
 using stable Azure LUN links before mounting them. These are separate Azure-managed disks, not partitions or
@@ -558,7 +566,8 @@ ARM parameters, cloud-init, or command arguments. SSH host keys use OpenSSH's
 `accept-new` policy: new hosts are trusted on first connection, and changed keys
 are rejected. The VM authenticates to ACR using managed identity rather than
 registry admin credentials. Set `SKIP_IMAGE_BUILD=true` and `IMAGE_TAG` to reuse
-an existing image. `VM_SIZE` can override compute size; data disks remain 512 GiB. `VM_ZONE` selects the zone;
+an existing image. `VM_SIZE` controls compute size; `EXECUTION_DISK_SIZE_GB` and
+`CONSENSUS_DISK_SIZE_GB` control data disk capacity. `VM_ZONE` selects the zone;
 `DATA_DISK_IOPS` and `DATA_DISK_MBPS` set performance per disk. Compute overrides
 must support NVMe and Premium SSD v2. Confirm SKU and disk availability in the
 selected zone before deployment.

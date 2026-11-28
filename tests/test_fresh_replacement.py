@@ -118,6 +118,51 @@ class BootstrapTests(unittest.TestCase):
             cls.return_value.build.assert_not_called()
 
 class FreshProvisioningTests(unittest.TestCase):
+    def test_snapshot_restore_preserves_capacity_floor_and_reports_larger_disks(self):
+        for snapshot_size in (20, 50, 512):
+            with self.subTest(snapshot_size=snapshot_size), tempfile.TemporaryDirectory() as directory:
+                settings = Path(directory) / 'node.env'
+                settings.write_text('VM_NAME=new-node\nVM_DNS_LABEL=new-node\n')
+                f = object.__new__(Fleet)
+                f.apply, f.state = True, Path(directory)
+                f.c = {'network': 'mainnet', 'pool': 'mainnet', 'subscription': 'sub',
+                       'resource_group': 'rg', 'registry': 'registry', 'registry_resource_group': 'rg',
+                       'repository': 'telcoin-observer/mainnet', 'location': 'centralus',
+                       'chain_id': '0x2db', 'reference_rpc': 'https://reference.example', 'nodes': [],
+                       'storage': {'execution_size_gb': 50, 'consensus_size_gb': 50}}
+                f.az = Mock(return_value={'diskSizeGB': snapshot_size})
+                f.subnet_id, f.backend_id, f.wait_synced = Mock(return_value='subnet'), Mock(return_value='backend'), Mock()
+                prefix = '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Compute/snapshots/'
+                pair = {'execution': prefix+'execution', 'consensus': prefix+'consensus'}
+                with patch('fleet.execute', side_effect=[json.dumps({'VM_NAME': 'new-node', 'VM_DNS_LABEL': 'new-node'}), '']) as execute, \
+                     patch('builtins.print') as output:
+                    f.add(str(settings), IMAGE, seed_pair=pair, serve_public=False)
+                    env = execute.call_args_list[1].kwargs['env']
+                    self.assertEqual(env['EXECUTION_DISK_SIZE_GB'], str(max(50, snapshot_size)))
+                    self.assertEqual(env['CONSENSUS_DISK_SIZE_GB'], str(max(50, snapshot_size)))
+                    notices = [str(c) for c in output.call_args_list if 'cannot shrink a restore' in str(c)]
+                    self.assertEqual(len(notices), 2 if snapshot_size > 50 else 0)
+
+    def test_pool_sizing_overrides_inherited_deployment_settings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings = Path(directory) / 'node.env'
+            settings.write_text('VM_NAME=new-node\nVM_DNS_LABEL=new-node\n')
+            f = object.__new__(Fleet)
+            f.apply, f.state = True, Path(directory)
+            f.c = {'network': 'mainnet', 'pool': 'mainnet', 'subscription': 'sub',
+                   'resource_group': 'rg', 'registry': 'registry', 'registry_resource_group': 'rg',
+                   'repository': 'telcoin-observer/mainnet',
+                   'location': 'centralus', 'chain_id': '0x2db',
+                   'reference_rpc': 'https://reference.example', 'nodes': [],
+                   'compute': {'vm_size': 'Standard_D2s_v6'}, 'storage': {'iops': 3000}}
+            f.subnet_id, f.backend_id, f.wait_synced = Mock(return_value='subnet'), Mock(return_value='backend'), Mock()
+            with patch.dict('os.environ', {'VM_SIZE': 'Standard_D4s_v6', 'DATA_DISK_IOPS': '5000'}), \
+                 patch('fleet.execute', side_effect=[json.dumps({'VM_NAME': 'new-node', 'VM_DNS_LABEL': 'new-node'}), '']) as execute:
+                f.add(str(settings), IMAGE, fresh=True)
+                env = execute.call_args_list[1].kwargs['env']
+                self.assertEqual(env['VM_SIZE'], 'Standard_D2s_v6')
+                self.assertEqual(env['DATA_DISK_IOPS'], '3000')
+
     def test_fresh_add_never_looks_up_snapshots_and_clears_restore_environment(self):
         with tempfile.TemporaryDirectory() as directory:
             settings = Path(directory) / 'node.env'
