@@ -1,0 +1,23 @@
+name: Mainnet observer backups (opt-in)
+on:
+  schedule:
+    - cron: '43 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: observer-lifecycle-mainnet
+  cancel-in-progress: false
+jobs:
+  backup:
+    if: github.ref == 'refs/heads/main' && vars.OBSERVER_MAINNET_ENABLED == 'true' && vars.OBSERVER_MAINNET_AUTOMATION_ENABLED == 'true'
+    runs-on: [self-hosted, observer-operations-mainnet]
+    timeout-minutes: 360
+    env:
+      OBSERVER_STATE_DIR: /var/lib/oprail-observers
+    steps:
+      - uses: actions/checkout@v4
+      - name: Authenticate mainnet runner managed identity
+        run: az login --identity --output none
+      - name: Back up the last observer only when another observer is synced
+        run: python3 scripts/pool/snapshot_tick.py --config /etc/oprail-observers/mainnet/pool.json
