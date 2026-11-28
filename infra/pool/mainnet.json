@@ -18,6 +18,7 @@
   "ready_samples": 3,
   "drain_seconds": 30,
   "allow_single_node_maintenance": false,
+  "backup_mode": "existing-fleet",
   "snapshot_interval_hours": 4,
   "snapshot_retention_days": 7,
   "automation_enabled": false,

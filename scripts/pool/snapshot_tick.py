@@ -6,6 +6,7 @@ import fcntl
 import json
 from pathlib import Path
 from fleet import Fleet
+from backup_strategy import capture
 
 
 def main():
@@ -34,11 +35,7 @@ def main():
         if pairs and (datetime.now(timezone.utc) - pairs[-1]['created']).total_seconds() < hours * 3600:
             print('Latest snapshot is inside the configured interval; no new capture.')
             return
-        if fleet.c.get('backup_mode') == 'temporary-observer':
-            from backup_helper import backup
-            backup(fleet)
-        else:
-            fleet.snapshot()
+        capture(fleet)
         # Never prune if capture or source recovery fails.
         fleet.prune()
 

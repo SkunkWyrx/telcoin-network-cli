@@ -279,7 +279,8 @@ sync
         if not self.synced(node):
             raise RuntimeError('Snapshot source is not synced')
         others = [n for n in nodes if n['name'] != node['name']]
-        if not any(self.synced(n) for n in others) and not self.c.get('allow_single_node_maintenance', False):
+        allow_single = self.c.get('allow_single_node_maintenance', False) and self.c['network'] != 'mainnet'
+        if not any(self.snapshot_keeper_ready(n) for n in others) and not allow_single:
             raise RuntimeError('No second ready observer; snapshot downtime needs explicit opt-in')
         disks = {d['lun']: d['managedDisk']['id'] for d in vm['storageProfile']['dataDisks']}
         if set(disks) != {0, 1}:
@@ -288,8 +289,12 @@ sync
         capture = self.c['pool'] + '-' + stamp.strftime('%Y%m%dT%H%M%SZ') + '-' + uuid.uuid4().hex[:6]
         created = []
         self.ssh(node, 'install -d /run/telcoin\n(set -o noclobber; printf %s snapshot > /run/telcoin/draining)\n')
+        stop_attempted = False
         try:
             time.sleep(self.c.get('drain_seconds', 30))
+            if not any(self.snapshot_keeper_ready(n) for n in others) and not allow_single:
+                raise RuntimeError('No second ready observer after drain; snapshot source kept running')
+            stop_attempted = True
             self.ssh(node, '''since=$(date -u +%FT%T.%NZ)
 id=$(docker inspect telcoin-observer --format '{{.Id}}')
 systemctl stop telcoin-observer
@@ -311,7 +316,9 @@ sync
                                    '--source', disks[lun], '--incremental', 'true', '--tags', *tags)
                 created.append(snapshot['id'])
         finally:
-            if not disposable:
+            if not stop_attempted:
+                self.ssh(node, 'rm -f /run/telcoin/draining\n')
+            elif not disposable:
                 self.restart_snapshot_source(node)
         deadline = time.monotonic() + self.c.get('snapshot_copy_timeout_seconds', 14400)
         while time.monotonic() < deadline:
@@ -329,6 +336,22 @@ sync
         pairs = self.pairs()
         self.save('latest-snapshot.json', self.serial_pair(pairs[-1]))
         print('Latest validated pair:', capture)
+
+    def snapshot_keeper_ready(self, node):
+        if not self.synced(node):
+            return False
+        if self.c['network'] != 'mainnet':
+            return True
+        # /status ignores drain markers for recovery controllers; /readyz does not.
+        command = ''
+        if self.c.get('public_rpc'):
+            command = 'systemctl is-active --quiet telcoin-rpc-tls.service\n'
+        command += 'curl -fsS --max-time 5 http://127.0.0.1:9090/readyz\n'
+        try:
+            status = json.loads(self.ssh(node, command))
+            return isinstance(status, dict) and status.get('ready') is True
+        except (subprocess.CalledProcessError, ValueError, TypeError):
+            return False
 
     def restart_snapshot_source(self, node):
         self.az('vm', 'start', '-g', self.c['resource_group'], '-n', node['name'])

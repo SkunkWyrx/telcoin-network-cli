@@ -92,3 +92,48 @@ is checked; this is not a full disaster-recovery restore test of every snapshot.
 6. Recheck the management page and backup workflow history. Do not disable or
    delete load balancers, certificate DNS/vaults, API-key synchronization, the
    observer's own health service or disk-growth timers.
+
+## Mainnet: two existing observers
+
+Production uses two observers and `backup_mode=existing-fleet` in
+`infra/pool/mainnet.json`. Scheduled backups select the highest-ordinal (last)
+observer; no temporary third observer is provisioned. The selected source must be
+running and synced. Another observer must be synced, undrained, and have its TLS
+proxy service active when public RPC is configured. This is checked before drain
+and again after the drain delay, immediately before stopping the source.
+Mainnet refuses a single-node capture even if the downtime override is set.
+
+The source drains, closes gracefully, and is deallocated for paired execution /
+consensus snapshot creation. It restarts after capture, catches up, and clears its
+drain marker only after sync validation. Azure's background snapshot copies must
+also complete before the new pair becomes latest. Capture/recovery failures leave
+old backups unpruned. The other observer remains in service during maintenance.
+The existing four-hour interval and seven-day retention still apply.
+
+At mainnet launch:
+
+1. Configure the independent mainnet runner (`observer-operations-mainnet`), its
+   network-scoped managed identity permissions, and the private mainnet profile at
+   `/etc/oprail-observers/mainnet/pool.json`, including the verified reference RPC.
+2. Bring both mainnet observers online and verify both are synced and healthy
+   members of the RPC load balancer before enabling scheduled maintenance.
+   If no mainnet backup exists yet, provision the second node with fresh data
+   disks and let it sync while the first serves; keep the two-node snapshot guard.
+3. Set `automation_enabled=true` in that private mainnet profile. Enable repository
+   variables `OBSERVER_MAINNET_ENABLED=true` and
+   `OBSERVER_MAINNET_AUTOMATION_ENABLED=true` only at launch readiness.
+4. Run `observer-mainnet-backups.yml` manually for the first production proof:
+   verify RPC remains available, the last observer rejoins synced, the pair is
+   complete, and retention preserves the latest usable backup.
+
+The mainnet workflow checks hourly and captures only when the configured interval
+is due. It uses `observer-lifecycle-mainnet` concurrency, shared with mainnet
+management operations, plus the fleet operation lock. Mainnet backup opt-in is
+independent of Adiri's automation flag and runner power controls. All mainnet
+launch/automation flags remain disabled until explicitly enabled at launch.
+The installed one-off command uses the same strategy:
+
+```bash
+OBSERVER_STATE_DIR=/var/lib/oprail-observers python3 scripts/pool/backup_now.py \
+  --config /etc/oprail-observers/mainnet/pool.json --apply
+```
